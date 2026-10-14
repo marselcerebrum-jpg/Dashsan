@@ -6,6 +6,8 @@ const DAYS_FULL = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu
 const PAGE_SIZE = 25;
 
 const $ = (id) => document.getElementById(id);
+// URL absolut tanpa user:password — fetch() menolak URL relatif bila halaman dibuka lewat https://user:pass@host
+const apiUrl = (p) => new URL(p, location.origin);
 const state = { config: null, trx: [], prev: [], page: 0, leads: [], charts: {} };
 
 // ---------- format ----------
@@ -453,7 +455,7 @@ const TRX_COLS = [
 // ---------- load ----------
 async function fetchRange(platform, start, end) {
   const qs = new URLSearchParams({ platform, start_date: start, end_date: end });
-  const res = await fetch(`/api/transactions?${qs}`);
+  const res = await fetch(apiUrl(`/api/transactions?${qs}`));
   const body = await res.json().catch(() => ({}));
   if (!res.ok || !body.status) throw new Error(body.message || `Gagal memuat data (HTTP ${res.status})`);
   return body;
@@ -530,7 +532,7 @@ function restoreFilters() {
 
 // ---------- init ----------
 async function init() {
-  state.config = await fetch('/api/config').then((r) => r.json());
+  state.config = await fetch(apiUrl('/api/config')).then((r) => r.json());
   $('platform').value = state.config.defaultPlatform;
   $('endDate').value = state.config.today;
   $('startDate').value = addDays(state.config.today, -29);
