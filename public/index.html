@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Dashboard Sales</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="vendor/chart.umd.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <h1>Dashboard Sales</h1>
+      <span id="lastUpdated" class="muted"></span>
+    </div>
+    <form id="filters" class="filters">
+      <label>Platform
+        <input id="platform" type="text" required pattern="[a-zA-Z0-9_-]+" />
+      </label>
+      <label>Periode
+        <select id="preset">
+          <option value="today">Hari ini</option>
+          <option value="yesterday">Kemarin</option>
+          <option value="7">7 hari terakhir</option>
+          <option value="30" selected>30 hari terakhir</option>
+          <option value="90">90 hari terakhir</option>
+          <option value="this_month">Bulan ini</option>
+          <option value="last_month">Bulan lalu</option>
+          <option value="custom">Pilih tanggal…</option>
+        </select>
+      </label>
+      <label class="custom-range">Dari <input id="startDate" type="date" /></label>
+      <label class="custom-range">Sampai <input id="endDate" type="date" /></label>
+      <button type="submit" class="btn primary">Tampilkan</button>
+    </form>
+  </header>
+
+  <div id="demoBanner" class="banner" hidden>
+    Mode demo: data di bawah adalah <b>data contoh</b>. Isi <code>API_BASE_URL</code> di file <code>.env</code> untuk memakai data asli.
+  </div>
+  <div id="errorBanner" class="banner error" hidden></div>
+
+  <main id="main">
+    <section class="kpis" id="kpis"></section>
+
+    <section class="card">
+      <h2>Insight &amp; Rekomendasi Strategi</h2>
+      <ul id="insights" class="insights"></ul>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Tren Harian</h2>
+        <span class="muted">Omzet (transaksi sukses) &amp; jumlah transaksi</span>
+      </div>
+      <div class="chart tall"><canvas id="trendChart"></canvas></div>
+    </section>
+
+    <div class="grid-2">
+      <section class="card">
+        <div class="card-head"><h2>Status Transaksi</h2><span class="muted">Ke mana transaksi berakhir</span></div>
+        <div class="chart"><canvas id="statusChart"></canvas></div>
+      </section>
+      <section class="card">
+        <div class="card-head"><h2>Metode Pembayaran</h2><span class="muted">Omzet &amp; tingkat sukses</span></div>
+        <div class="chart"><canvas id="paymentChart"></canvas></div>
+      </section>
+    </div>
+
+    <section class="card">
+      <div class="card-head"><h2>Performa Produk</h2><span class="muted">Diurutkan berdasarkan omzet</span></div>
+      <div class="table-wrap"><table id="productTable"></table></div>
+    </section>
+
+    <div class="grid-2">
+      <section class="card">
+        <div class="card-head"><h2>Jam Ramai Pembelian</h2><span class="muted">Transaksi sukses per hari × jam</span></div>
+        <div id="heatmap" class="heatmap"></div>
+      </section>
+      <section class="card">
+        <div class="card-head"><h2>Tipe Produk</h2><span class="muted">Perdana vs perpanjangan, dll.</span></div>
+        <div class="chart"><canvas id="typeChart"></canvas></div>
+      </section>
+    </div>
+
+    <div class="grid-2">
+      <section class="card">
+        <div class="card-head"><h2>Kode Promo</h2><span class="muted">Efektivitas promo</span></div>
+        <div class="table-wrap"><table id="promoTable"></table></div>
+      </section>
+      <section class="card">
+        <div class="card-head"><h2>Customer Teratas</h2><span class="muted">Berdasarkan total belanja</span></div>
+        <div class="table-wrap"><table id="customerTable"></table></div>
+      </section>
+    </div>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Daftar Follow-up Sales</h2>
+        <div class="actions">
+          <span class="muted">Customer yang transaksinya Pending/Expired/Batal/Gagal dan belum beli</span>
+          <button id="exportLeads" class="btn">Export CSV</button>
+        </div>
+      </div>
+      <div class="table-wrap scroll"><table id="leadTable"></table></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Semua Transaksi</h2>
+        <div class="actions">
+          <input id="search" type="search" placeholder="Cari nama, email, HP, produk, trx id…" />
+          <select id="statusFilter">
+            <option value="">Semua status</option>
+            <option value="0">Pending</option>
+            <option value="1">Success</option>
+            <option value="2">Expired</option>
+            <option value="3">Canceled</option>
+            <option value="4">Failed</option>
+          </select>
+          <button id="exportTrx" class="btn">Export CSV</button>
+        </div>
+      </div>
+      <div class="table-wrap"><table id="trxTable"></table></div>
+      <div class="pager"><button id="prevPage" class="btn">‹</button><span id="pageInfo"></span><button id="nextPage" class="btn">›</button></div>
+    </section>
+  </main>
+
+  <div id="loading" class="loading" hidden><div class="spinner"></div><span>Mengambil data…</span></div>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>
