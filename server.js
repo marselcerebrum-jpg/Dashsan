@@ -19,22 +19,11 @@ const API_KEY = process.env.API_KEY || '';
 const DEFAULT_PLATFORM = process.env.DEFAULT_PLATFORM || 'jadiasn';
 const DEMO = process.env.DEMO === '1' || !API_BASE_URL || !API_KEY;
 
-// Cara mengirim API key. Jika API_KEY_HEADER / API_KEY_QUERY diisi di .env, hanya cara itu yang dipakai.
-// Jika tidak, server mencoba beberapa cara umum dan mengingat cara pertama yang tidak ditolak (401).
-const AUTH_CANDIDATES = process.env.API_KEY_QUERY
-  ? [{ query: process.env.API_KEY_QUERY }]
-  : process.env.API_KEY_HEADER
-    ? [{ header: process.env.API_KEY_HEADER }]
-    : [
-        { header: 'x-api-key' },
-        { header: 'Authorization', prefix: 'Bearer ' },
-        { header: 'api-key' },
-        { header: 'Authorization' },
-        { query: 'api_key' },
-        { query: 'key' },
-      ];
-let authMode = AUTH_CANDIDATES.length === 1 ? AUTH_CANDIDATES[0] : null;
-const describeAuth = (m) => (m.query ? `query ?${m.query}=` : `header ${m.header}: ${m.prefix || ''}<key>`);
+// API key dikirim apa adanya di header Authorization (sudah dicek ke markaz.cerehub.id).
+// API_KEY_HEADER / API_KEY_QUERY di .env bisa mengganti cara ini.
+const authMode = process.env.API_KEY_QUERY
+  ? { query: process.env.API_KEY_QUERY }
+  : { header: process.env.API_KEY_HEADER || 'Authorization' };
 const CHUNK_DAYS = 31;
 const MAX_RANGE_DAYS = 400;
 
@@ -87,36 +76,9 @@ async function fetchChunk(platform, start, end, status) {
   const hit = cache.get(key);
   if (hit && hit.expires > Date.now()) return hit.data;
 
-  if (!authMode) {
-    // deteksi cara autentikasi; permintaan paralel menunggu hasil deteksi yang sama
-    detecting ??= detectAuth(platform, start, end, status).finally(() => (detecting = null));
-    const data = await detecting;
-    if (data && start === data.start && end === data.end && status === data.status) {
-      cache.set(key, { data: data.rows, expires: Date.now() + cacheTtl(end) });
-      return data.rows;
-    }
-  }
-
   const data = await requestApi(authMode, platform, start, end, status);
   cache.set(key, { data, expires: Date.now() + cacheTtl(end) });
   return data;
-}
-
-let detecting = null;
-async function detectAuth(platform, start, end, status) {
-  let lastErr;
-  for (const mode of AUTH_CANDIDATES) {
-    try {
-      const rows = await requestApi(mode, platform, start, end, status);
-      authMode = mode;
-      console.log(`[api] autentikasi berhasil memakai ${describeAuth(mode)} — set API_KEY_HEADER/API_KEY_QUERY di .env untuk mengunci`);
-      return { rows, start, end, status };
-    } catch (err) {
-      lastErr = err;
-      if (err.code !== 401) throw err;
-    }
-  }
-  throw lastErr;
 }
 
 async function requestApi(mode, platform, start, end, status) {
@@ -130,7 +92,7 @@ async function requestApi(mode, platform, start, end, status) {
   if (status !== '') url.searchParams.set('status', status);
   const headers = { Accept: 'application/json' };
   if (mode.query) url.searchParams.set(mode.query, API_KEY);
-  else headers[mode.header] = (mode.prefix || '') + API_KEY;
+  else headers[mode.header] = API_KEY;
 
   const res = await fetch(url, { headers, signal: AbortSignal.timeout(60000) });
   let body;

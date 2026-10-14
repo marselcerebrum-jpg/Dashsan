@@ -14,8 +14,8 @@ Sumber data default: `https://markaz.cerehub.id/api/transaction`.
 Tanpa `API_KEY`, dashboard berjalan dalam **mode demo** (data contoh) — berguna untuk melihat tampilan.
 
 API key hanya disimpan di server (`.env`, sudah di-`.gitignore`) dan tidak pernah dikirim ke browser.
-Cara mengirim API key dideteksi otomatis pada request pertama (lihat log server, mis.
-`autentikasi berhasil memakai header x-api-key`). Untuk menguncinya, isi `API_KEY_HEADER` atau `API_KEY_QUERY` di `.env`.
+API key dikirim di header `Authorization: <key>` (tanpa `Bearer`). Jika dashboard menampilkan
+`API Key expired`, minta key baru ke tim backend lalu ganti `API_KEY` di `.env`.
 
 ## Isi dashboard
 
