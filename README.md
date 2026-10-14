@@ -50,5 +50,5 @@ API key dikirim di header `Authorization: <key>` (tanpa `Bearer`). Jika dashboar
    - `DASHBOARD_USER` — opsional, default `sales`
 3. Deploy. Saat membuka link, browser meminta username & password.
 
-Semua request diarahkan ke satu fungsi (`api/index.js`, lihat `vercel.json`) sehingga halaman dan data
+Vercel menjalankan `server.js` sebagai satu fungsi untuk semua request, sehingga halaman dan data
 sama-sama terlindungi password. Setelah mengubah Environment Variables, lakukan **Redeploy** agar berlaku.

@@ -298,4 +298,6 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   });
 }
 
+// Vercel (preset Node) memakai default export ini sebagai fungsi untuk semua request.
+export default handler;
 export { handler, splitRange, demoTransactions };
