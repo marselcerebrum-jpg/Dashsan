@@ -44,12 +44,26 @@ function presetRange(preset, today) {
 }
 
 // ---------- normalisasi data ----------
+// API mengirim promo_code sebagai string JSON array ("[\"LOLOSASN \"]", "[]", "null"),
+// dengan huruf besar/kecil & spasi yang tidak konsisten → satukan jadi "LOLOSASN" atau null.
+function normalizePromo(v) {
+  let codes = v;
+  if (typeof v === 'string') {
+    try { codes = JSON.parse(v); } catch { codes = v; }
+  }
+  if (!Array.isArray(codes)) codes = codes == null ? [] : [codes];
+  const out = [...new Set(codes.map((c) => String(c ?? '').trim().toUpperCase()).filter((c) => c && c !== 'NULL'))];
+  return out.length ? out.join(', ') : null;
+}
+
 function normalize(t) {
   const [d, time = '00:00:00'] = String(t.date || '').split(' ');
   const hour = Number(time.slice(0, 2)) || 0;
   const phone = String(t.customer_phone || '').replace(/\D/g, '').replace(/^0/, '').replace(/^62/, '');
   return {
     ...t,
+    promo_code: normalizePromo(t.promo_code),
+    paid_date: t.paid_date && t.paid_date !== '-' ? t.paid_date : null,
     nominal: Number(t.nominal) || 0,
     status: Number(t.status),
     day: d,
@@ -197,7 +211,9 @@ function renderInsights(rows, s, p, range) {
 
   if (Number.isFinite(s.repeatRate)) {
     const renew = success.filter((t) => /perpanjang|upgrade/i.test(t.product_type || '')).length;
-    out.push(`${pct(s.repeatRate)} customer membeli lebih dari sekali; ${pct(success.length ? renew / success.length : 0)} transaksi adalah perpanjangan/upgrade. ${s.repeatRate < 0.1 ? 'Peluang besar di program retensi (alumni, perpanjangan, bundling).' : ''}`);
+    const renewShare = success.length ? renew / success.length : 0;
+    const repeatText = s.repeatRate > 0 ? `${pct(s.repeatRate)} customer membeli lebih dari sekali di periode ini; ` : '';
+    out.push(`${repeatText}<b>${pct(renewShare)}</b> transaksi sukses adalah perpanjangan/upgrade dari customer lama. ${renewShare < 0.3 ? 'Peluang besar di program retensi: ingatkan customer yang masa aktifnya hampir habis untuk perpanjang.' : ''}`);
   }
 
   $('insights').innerHTML = out.map((x) => `<li>${x}</li>`).join('');
