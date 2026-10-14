@@ -14,12 +14,27 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 loadEnv(path.join(__dirname, '.env'));
 
 const PORT = Number(process.env.PORT || 3000);
-const API_BASE_URL = (process.env.API_BASE_URL || '').replace(/\/+$/, '');
+const API_BASE_URL = (process.env.API_BASE_URL ?? 'https://markaz.cerehub.id').replace(/\/+$/, '');
 const API_KEY = process.env.API_KEY || '';
-const API_KEY_HEADER = process.env.API_KEY_HEADER || 'x-api-key';
-const API_KEY_QUERY = process.env.API_KEY_QUERY || ''; // isi mis. "api_key" jika key dikirim lewat query string
 const DEFAULT_PLATFORM = process.env.DEFAULT_PLATFORM || 'jadiasn';
-const DEMO = process.env.DEMO === '1' || !API_BASE_URL;
+const DEMO = process.env.DEMO === '1' || !API_BASE_URL || !API_KEY;
+
+// Cara mengirim API key. Jika API_KEY_HEADER / API_KEY_QUERY diisi di .env, hanya cara itu yang dipakai.
+// Jika tidak, server mencoba beberapa cara umum dan mengingat cara pertama yang tidak ditolak (401).
+const AUTH_CANDIDATES = process.env.API_KEY_QUERY
+  ? [{ query: process.env.API_KEY_QUERY }]
+  : process.env.API_KEY_HEADER
+    ? [{ header: process.env.API_KEY_HEADER }]
+    : [
+        { header: 'x-api-key' },
+        { header: 'Authorization', prefix: 'Bearer ' },
+        { header: 'api-key' },
+        { header: 'Authorization' },
+        { query: 'api_key' },
+        { query: 'key' },
+      ];
+let authMode = AUTH_CANDIDATES.length === 1 ? AUTH_CANDIDATES[0] : null;
+const describeAuth = (m) => (m.query ? `query ?${m.query}=` : `header ${m.header}: ${m.prefix || ''}<key>`);
 const CHUNK_DAYS = 31;
 const MAX_RANGE_DAYS = 400;
 
@@ -72,6 +87,39 @@ async function fetchChunk(platform, start, end, status) {
   const hit = cache.get(key);
   if (hit && hit.expires > Date.now()) return hit.data;
 
+  if (!authMode) {
+    // deteksi cara autentikasi; permintaan paralel menunggu hasil deteksi yang sama
+    detecting ??= detectAuth(platform, start, end, status).finally(() => (detecting = null));
+    const data = await detecting;
+    if (data && start === data.start && end === data.end && status === data.status) {
+      cache.set(key, { data: data.rows, expires: Date.now() + cacheTtl(end) });
+      return data.rows;
+    }
+  }
+
+  const data = await requestApi(authMode, platform, start, end, status);
+  cache.set(key, { data, expires: Date.now() + cacheTtl(end) });
+  return data;
+}
+
+let detecting = null;
+async function detectAuth(platform, start, end, status) {
+  let lastErr;
+  for (const mode of AUTH_CANDIDATES) {
+    try {
+      const rows = await requestApi(mode, platform, start, end, status);
+      authMode = mode;
+      console.log(`[api] autentikasi berhasil memakai ${describeAuth(mode)} — set API_KEY_HEADER/API_KEY_QUERY di .env untuk mengunci`);
+      return { rows, start, end, status };
+    } catch (err) {
+      lastErr = err;
+      if (err.code !== 401) throw err;
+    }
+  }
+  throw lastErr;
+}
+
+async function requestApi(mode, platform, start, end, status) {
   const url = new URL(`${API_BASE_URL}/api/transaction`);
   url.searchParams.set('platform', platform);
   if (start === end) url.searchParams.set('date', start);
@@ -80,10 +128,9 @@ async function fetchChunk(platform, start, end, status) {
     url.searchParams.set('end_date', end);
   }
   if (status !== '') url.searchParams.set('status', status);
-  if (API_KEY_QUERY) url.searchParams.set(API_KEY_QUERY, API_KEY);
-
   const headers = { Accept: 'application/json' };
-  if (!API_KEY_QUERY) headers[API_KEY_HEADER] = API_KEY;
+  if (mode.query) url.searchParams.set(mode.query, API_KEY);
+  else headers[mode.header] = (mode.prefix || '') + API_KEY;
 
   const res = await fetch(url, { headers, signal: AbortSignal.timeout(60000) });
   let body;
@@ -93,13 +140,12 @@ async function fetchChunk(platform, start, end, status) {
     throw Object.assign(new Error(`Respons API bukan JSON (HTTP ${res.status})`), { code: 502 });
   }
   if (!res.ok || body.status === false) {
+    const unauthorized = res.status === 401 || res.status === 403 || /api key/i.test(body.message || '');
     throw Object.assign(new Error(body.message || `API error HTTP ${res.status}`), {
-      code: res.status === 401 ? 401 : 502,
+      code: unauthorized ? 401 : 502,
     });
   }
-  const data = Array.isArray(body.data) ? body.data : [];
-  cache.set(key, { data, expires: Date.now() + cacheTtl(end) });
-  return data;
+  return Array.isArray(body.data) ? body.data : [];
 }
 
 async function getTransactions(platform, start, end, status) {
@@ -251,7 +297,7 @@ const server = http.createServer((req, res) => {
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   server.listen(PORT, () => {
     console.log(`Dashboard Sales berjalan di http://localhost:${PORT}`);
-    console.log(DEMO ? '⚠  MODE DEMO: API_BASE_URL belum diisi, menampilkan data contoh.' : `Sumber data: ${API_BASE_URL}/api/transaction`);
+    console.log(DEMO ? '⚠  MODE DEMO: API_KEY/API_BASE_URL belum diisi (atau DEMO=1), menampilkan data contoh.' : `Sumber data: ${API_BASE_URL}/api/transaction`);
   });
 }
 
