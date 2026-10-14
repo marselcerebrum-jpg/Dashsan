@@ -5,6 +5,7 @@
 // - Mode demo (data contoh) bila API_BASE_URL belum diisi atau DEMO=1
 
 import http from 'node:http';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -231,8 +232,9 @@ async function handleApi(req, res, url) {
 
 function serveStatic(req, res, url) {
   const rel = url.pathname === '/' ? '/index.html' : decodeURIComponent(url.pathname);
-  const file = path.normalize(path.join(__dirname, 'public', rel));
-  if (!file.startsWith(path.join(__dirname, 'public'))) {
+  const root = path.join(__dirname, 'web');
+  const file = path.normalize(path.join(root, rel));
+  if (!file.startsWith(root + path.sep)) {
     res.writeHead(403);
     return res.end();
   }
@@ -246,21 +248,54 @@ function serveStatic(req, res, url) {
   });
 }
 
-const server = http.createServer((req, res) => {
+// Password dashboard (HTTP Basic Auth). Wajib di Vercel karena dashboard memuat data pribadi customer;
+// di komputer lokal boleh dikosongkan.
+const DASHBOARD_USER = process.env.DASHBOARD_USER || 'sales';
+const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD || '';
+const REQUIRE_PASSWORD = Boolean(process.env.VERCEL) || Boolean(DASHBOARD_PASSWORD);
+
+function safeEqual(a, b) {
+  const x = crypto.createHash('sha256').update(a).digest();
+  const y = crypto.createHash('sha256').update(b).digest();
+  return crypto.timingSafeEqual(x, y);
+}
+
+function authorized(req, res) {
+  if (!REQUIRE_PASSWORD) return true;
+  if (!DASHBOARD_PASSWORD) {
+    res.writeHead(503, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('DASHBOARD_PASSWORD belum diatur di Environment Variables Vercel.');
+    return false;
+  }
+  const [scheme, encoded] = String(req.headers.authorization || '').split(' ');
+  if (scheme === 'Basic' && encoded) {
+    const decoded = Buffer.from(encoded, 'base64').toString('utf8');
+    const i = decoded.indexOf(':');
+    const userOk = i >= 0 && safeEqual(decoded.slice(0, i), DASHBOARD_USER);
+    const passOk = i >= 0 && safeEqual(decoded.slice(i + 1), DASHBOARD_PASSWORD);
+    if (userOk && passOk) return true;
+  }
+  res.writeHead(401, { 'WWW-Authenticate': 'Basic realm="Dashboard Sales", charset="UTF-8"', 'Content-Type': 'text/plain; charset=utf-8' });
+  res.end('Login diperlukan.');
+  return false;
+}
+
+function handler(req, res) {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   if (req.method !== 'GET') {
     res.writeHead(405);
     return res.end();
   }
-  if (url.pathname.startsWith('/api/')) return void handleApi(req, res, url);
+  if (!authorized(req, res)) return;
+  if (url.pathname.startsWith('/api/')) return handleApi(req, res, url);
   serveStatic(req, res, url);
-});
+}
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  server.listen(PORT, () => {
+  http.createServer(handler).listen(PORT, () => {
     console.log(`Dashboard Sales berjalan di http://localhost:${PORT}`);
     console.log(DEMO ? '⚠  MODE DEMO: API_KEY/API_BASE_URL belum diisi (atau DEMO=1), menampilkan data contoh.' : `Sumber data: ${API_BASE_URL}/api/transaction`);
   });
 }
 
-export { server, splitRange, demoTransactions };
+export { handler, splitRange, demoTransactions };

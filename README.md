@@ -39,4 +39,16 @@ API key dikirim di header `Authorization: <key>` (tanpa `Bearer`). Jika dashboar
 - Rentang tanggal panjang dipecah per 31 hari ke API (maks 3 request paralel) dan di-cache di memori
   (2 menit untuk data hari ini, 30 menit untuk data lampau).
 - Rentang maksimal 400 hari per permintaan.
-- Chart.js 4.4.1 disertakan di `public/vendor` (lisensi MIT) agar tetap jalan meski CDN diblokir.
+- Chart.js 4.4.1 disertakan di `web/vendor` (lisensi MIT) agar tetap jalan meski CDN diblokir.
+
+## Deploy ke Vercel
+
+1. Import repo ini di Vercel (Add New → Project). Framework Preset: **Other**, tanpa build command.
+2. Di **Settings → Environment Variables** isi:
+   - `API_KEY` — API key Markaz
+   - `DASHBOARD_PASSWORD` — password untuk tim sales (wajib; tanpa ini dashboard menolak semua akses)
+   - `DASHBOARD_USER` — opsional, default `sales`
+3. Deploy. Saat membuka link, browser meminta username & password.
+
+Semua request diarahkan ke satu fungsi (`api/index.js`, lihat `vercel.json`) sehingga halaman dan data
+sama-sama terlindungi password. Setelah mengubah Environment Variables, lakukan **Redeploy** agar berlaku.
