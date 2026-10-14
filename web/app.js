@@ -4,6 +4,8 @@ const STATUS = ['Pending', 'Success', 'Expired', 'Canceled', 'Failed'];
 const DAYS = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
 const DAYS_FULL = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
 const PAGE_SIZE = 25;
+// warna mengikuti tipe produk (bukan urutan), supaya konsisten di semua periode
+const TYPE_COLOR = { Perdana: '--s1', Perpanjangan: '--s2', Upgrade: '--s3' };
 
 const $ = (id) => document.getElementById(id);
 // URL absolut tanpa user:password — fetch() menolak URL relatif bila halaman dibuka lewat https://user:pass@host
@@ -226,7 +228,7 @@ const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v
 function chart(id, config) {
   state.charts[id]?.destroy();
   Chart.defaults.color = css('--muted');
-  Chart.defaults.borderColor = css('--border');
+  Chart.defaults.borderColor = css('--grid');
   Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
   state.charts[id] = new Chart($(id), config);
 }
@@ -245,9 +247,9 @@ function renderTrend(rows, range) {
     data: {
       labels: labels.map(dateLabel),
       datasets: [
-        { type: 'bar', label: 'Omzet', data: labels.map((d) => by.get(d).rev), backgroundColor: css('--accent'), borderRadius: 3, yAxisID: 'y' },
-        { type: 'line', label: 'Transaksi sukses', data: labels.map((d) => by.get(d).ok), borderColor: css('--good'), backgroundColor: css('--good'), tension: 0.3, pointRadius: labels.length > 45 ? 0 : 2, yAxisID: 'y1' },
-        { type: 'line', label: 'Total checkout', data: labels.map((d) => by.get(d).all), borderColor: css('--muted'), borderDash: [4, 4], pointRadius: 0, tension: 0.3, yAxisID: 'y1' },
+        { type: 'bar', label: 'Omzet', data: labels.map((d) => by.get(d).rev), backgroundColor: css('--s1'), borderRadius: 4, yAxisID: 'y' },
+        { type: 'line', label: 'Transaksi sukses', data: labels.map((d) => by.get(d).ok), borderColor: css('--s3'), backgroundColor: css('--s3'), borderWidth: 2, tension: 0.3, pointRadius: labels.length > 45 ? 0 : 2, yAxisID: 'y1' },
+        { type: 'line', label: 'Total checkout', data: labels.map((d) => by.get(d).all), borderColor: css('--s2'), backgroundColor: css('--s2'), borderWidth: 2, borderDash: [5, 4], pointRadius: 0, tension: 0.3, yAxisID: 'y1' },
       ],
     },
     options: {
@@ -266,10 +268,10 @@ function renderTrend(rows, range) {
 function renderStatus(rows) {
   const counts = STATUS.map((_, i) => rows.filter((t) => t.status === i).length);
   const nominal = STATUS.map((_, i) => rows.filter((t) => t.status === i).reduce((a, t) => a + t.nominal, 0));
-  const colors = [css('--warn'), css('--good'), css('--muted'), css('--muted'), css('--bad')];
+  const colors = [css('--warn'), css('--good'), css('--neutral'), css('--neutral'), css('--bad')];
   chart('statusChart', {
     type: 'bar',
-    data: { labels: STATUS, datasets: [{ label: 'Transaksi', data: counts, backgroundColor: colors, borderRadius: 3 }] },
+    data: { labels: STATUS, datasets: [{ label: 'Transaksi', data: counts, backgroundColor: colors, borderRadius: 4 }] },
     options: {
       indexAxis: 'y',
       maintainAspectRatio: false,
@@ -288,8 +290,8 @@ function renderPayment(rows) {
     data: {
       labels: g.map((x) => x.key),
       datasets: [
-        { type: 'bar', label: 'Omzet', data: g.map((x) => x.revenue), backgroundColor: css('--accent'), borderRadius: 3, yAxisID: 'y' },
-        { type: 'line', label: 'Tingkat sukses', data: g.map((x) => x.conversion * 100), borderColor: css('--good'), backgroundColor: css('--good'), showLine: false, pointRadius: 5, yAxisID: 'y1' },
+        { type: 'bar', label: 'Omzet', data: g.map((x) => x.revenue), backgroundColor: css('--s1'), borderRadius: 4, yAxisID: 'y' },
+        { type: 'line', label: 'Tingkat sukses', data: g.map((x) => x.conversion * 100), borderColor: css('--surface'), backgroundColor: css('--s2'), borderWidth: 2, showLine: false, pointRadius: 6, pointHoverRadius: 8, yAxisID: 'y1' },
       ],
     },
     options: {
@@ -311,7 +313,7 @@ function renderType(rows) {
     data: {
       labels: g.map((x) => x.key),
       datasets: [
-        { label: 'Omzet', data: g.map((x) => x.revenue), backgroundColor: css('--accent'), borderRadius: 3 },
+        { label: 'Omzet', data: g.map((x) => x.revenue), backgroundColor: g.map((x) => css(TYPE_COLOR[x.key] || '--s7')), borderRadius: 4 },
       ],
     },
     options: {
@@ -330,7 +332,7 @@ function renderHeatmap(rows) {
   const head = `<tr><th></th>${[...Array(24).keys()].map((h) => `<th>${h % 3 === 0 ? h : ''}</th>`).join('')}</tr>`;
   const body = order
     .map((d) => `<tr><th class="row">${DAYS[d]}</th>${grid[d]
-      .map((v, h) => `<td class="cell" title="${DAYS_FULL[d]} ${String(h).padStart(2, '0')}.00 — ${v} trx sukses" style="background:color-mix(in srgb, var(--accent) ${v ? 10 + Math.round((v / max) * 90) : 4}%, transparent)"></td>`)
+      .map((v, h) => `<td class="cell" title="${DAYS_FULL[d]} ${String(h).padStart(2, '0')}.00 — ${v} trx sukses" style="background:color-mix(in srgb, var(--seq) ${v ? 12 + Math.round((v / max) * 88) : 5}%, var(--surface))"></td>`)
       .join('')}</tr>`)
     .join('');
   $('heatmap').innerHTML = `<table>${head}${body}</table><div class="muted" style="margin-top:6px">Makin gelap = makin banyak transaksi sukses. Arahkan kursor untuk detail.</div>`;
