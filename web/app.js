@@ -432,14 +432,66 @@ function renderProducts(rows, s) {
   ], g);
 }
 
+// ---------- biaya admin & diskon promo ----------
+// `nominal` dari API = harga setelah diskon + biaya admin metode bayar. Biaya admin dipelajari dari
+// transaksi TANPA promo (nominal − harga): bila hampir selalu sama → biaya tetap (QRIS Rp2.500, VA Rp4.000),
+// bila tidak → persentase dari harga (ShopeePay ±1,5%, GoPay ±2%).
+// Cadangan bila sampel di periode ini terlalu sedikit (dari data Sep–Okt 2026):
+const FEE_FALLBACK = {
+  QRIS: { fixed: 2500 }, BRI: { fixed: 4000 }, BNI: { fixed: 4000 }, MANDIRI: { fixed: 4000 },
+  DANA: { fixed: 3000 }, ALFAMART: { fixed: 5000 }, SHOPEEPAY: { rate: 0.015 }, GOPAY: { rate: 0.02 },
+};
+// Tarif bisa beda antar platform, jadi dipelajari per platform+metode, lalu per metode sebagai cadangan.
+const feeKeys = (t) => {
+  const m = String(t.payment_method || '').toUpperCase();
+  return [`${t.platform}|${m}`, m];
+};
+function estimateFees(rows) {
+  const samples = new Map();
+  for (const t of rows) {
+    const price = Number(t.product_price) || 0;
+    if (t.promo_code || !price) continue;
+    for (const k of feeKeys(t)) {
+      if (!samples.has(k)) samples.set(k, []);
+      samples.get(k).push({ fee: t.nominal - price, price });
+    }
+  }
+  const fees = new Map();
+  for (const [m, list] of samples) {
+    if (list.length < 3) continue;
+    const counts = new Map();
+    list.forEach(({ fee }) => counts.set(fee, (counts.get(fee) || 0) + 1));
+    const [modeFee, modeCount] = [...counts].sort((a, b) => b[1] - a[1])[0];
+    if (modeCount / list.length >= 0.8) fees.set(m, { fixed: Math.max(0, modeFee) });
+    else {
+      const r = list.map(({ fee, price }) => fee / price).sort((a, b) => a - b);
+      fees.set(m, { rate: Math.max(0, r[Math.floor(r.length / 2)]) });
+    }
+  }
+  return fees;
+}
+function promoDiscount(t, fees) {
+  const price = Number(t.product_price) || 0;
+  if (!price) return 0;
+  const [pk, m] = feeKeys(t);
+  const f = fees.get(pk) || fees.get(m) || FEE_FALLBACK[m] || { fixed: 0 };
+  // fixed: nominal = (harga − diskon) + biaya ; rate: nominal = (harga − diskon) × (1 + r)
+  const d = f.rate !== undefined ? price - t.nominal / (1 + f.rate) : price + f.fixed - t.nominal;
+  return Math.max(0, Math.round(d / 10) * 10);
+}
+
 function renderPromos(rows) {
-  const g = groupBy(rows.filter((t) => t.promo_code), (t) => t.promo_code).sort((a, b) => b.revenue - a.revenue);
+  const fees = estimateFees([...rows, ...state.prev]);
+  const g = groupBy(rows.filter((t) => t.promo_code), (t) => t.promo_code)
+    .map((x) => ({ ...x, discount: x.rows.filter((t) => t.status === 1).reduce((a, t) => a + promoDiscount(t, fees), 0) }))
+    .sort((a, b) => b.revenue - a.revenue);
   table('promoTable', [
     { label: 'Kode', render: (r) => `<b>${esc(r.key)}</b>` },
     { label: 'Dipakai', num: true, render: (r) => num(r.total) },
     { label: 'Sukses', num: true, render: (r) => `${num(r.success)} <span class="muted">(${pct(r.conversion)})</span>` },
     { label: 'Omzet', num: true, render: (r) => rupiah(r.revenue) },
-    { label: 'Diskon diberikan', num: true, render: (r) => rupiah(r.rows.filter((t) => t.status === 1).reduce((a, t) => a + Math.max(0, (Number(t.product_price) || 0) - t.nominal), 0)) },
+    { label: 'Diskon diberikan', num: true, render: (r) => rupiah(r.discount) },
+    { label: 'Diskon / penjualan', num: true, render: (r) => (r.success ? rupiah(r.discount / r.success) : '–') },
   ], g, 'Belum ada transaksi dengan kode promo');
 }
 
