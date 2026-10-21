@@ -61,13 +61,17 @@ function normalizePromo(v) {
 }
 
 function normalize(t) {
-  const [d, time = '00:00:00'] = String(t.date || '').split(' ');
+  const paid = t.paid_date && t.paid_date !== '-' ? t.paid_date : null;
+  // Waktu closing: transaksi sukses dihitung di tanggal bayar, sisanya di tanggal dibuat
+  const closingAt = Number(t.status) === 1 && paid ? paid : String(t.date || '');
+  const [d, time = '00:00:00'] = closingAt.split(' ');
   const hour = Number(time.slice(0, 2)) || 0;
   const phone = String(t.customer_phone || '').replace(/\D/g, '').replace(/^0/, '').replace(/^62/, '');
   return {
     ...t,
     promo_code: normalizePromo(t.promo_code),
-    paid_date: t.paid_date && t.paid_date !== '-' ? t.paid_date : null,
+    paid_date: paid,
+    closingAt,
     nominal: Number(t.nominal) || 0,
     status: Number(t.status),
     day: d,
@@ -415,12 +419,13 @@ function filteredTrx() {
 }
 
 function renderTrxTable() {
-  const rows = filteredTrx().sort((a, b) => b.date.localeCompare(a.date));
+  const rows = filteredTrx().sort((a, b) => b.closingAt.localeCompare(a.closingAt));
   const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   state.page = Math.min(state.page, pages - 1);
   table('trxTable', [
     { label: 'Trx ID', render: (r) => esc(r.trx_id) },
-    { label: 'Tanggal', render: (r) => esc(r.date) },
+    { label: 'Dibuat', render: (r) => esc(r.date) },
+    { label: 'Dibayar', render: (r) => esc(r.paid_date || '–') },
     { label: 'Customer', render: (r) => esc(r.customer_name) },
     { label: 'Produk', wrap: true, render: (r) => esc(r.product) },
     { label: 'Tipe', render: (r) => esc(r.product_type) },

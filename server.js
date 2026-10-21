@@ -68,9 +68,16 @@ function splitRange(start, end) {
 // ---------- cache ----------
 const cache = new Map();
 function cacheTtl(chunkEnd) {
-  // Data periode lampau jarang berubah (kecuali status pending) → cache lebih lama
-  return chunkEnd < todayStr() ? 30 * 60 * 1000 : 2 * 60 * 1000;
+  // Transaksi beberapa hari terakhir masih bisa berubah status (pending → success) → cache pendek
+  return chunkEnd < fmt(addDays(toDate(todayStr()), -LOOKBACK_DAYS)) ? 30 * 60 * 1000 : 2 * 60 * 1000;
 }
+
+// Closingan harian dihitung dari tanggal bayar, bukan tanggal transaksi dibuat.
+// API hanya bisa difilter per tanggal dibuat, jadi diambil mundur beberapa hari
+// (di data asli, jeda dibuat → dibayar maksimal ±24 jam), lalu disaring di sini.
+const LOOKBACK_DAYS = 2;
+const hasPaidDate = (t) => Number(t.status) === 1 && DATE_RE.test(String(t.paid_date || '').slice(0, 10));
+const closingDate = (t) => String(hasPaidDate(t) ? t.paid_date : t.date).slice(0, 10);
 
 async function fetchChunk(platform, start, end, status) {
   const key = `${platform}|${start}|${end}|${status}`;
@@ -112,6 +119,13 @@ async function requestApi(mode, platform, start, end, status) {
 }
 
 async function getTransactions(platform, start, end, status) {
+  const rows = await fetchCreatedRange(platform, fmt(addDays(toDate(start), -LOOKBACK_DAYS)), end, status);
+  return rows
+    .map((t) => ({ ...t, closing_date: closingDate(t) }))
+    .filter((t) => t.closing_date >= start && t.closing_date <= end);
+}
+
+async function fetchCreatedRange(platform, start, end, status) {
   if (DEMO) return demoTransactions(platform, start, end, status);
   const chunks = splitRange(start, end);
   const out = [];
