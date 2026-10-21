@@ -10,7 +10,7 @@ const TYPE_COLOR = { Perdana: '--s1', Perpanjangan: '--s2', Upgrade: '--s3' };
 const $ = (id) => document.getElementById(id);
 // URL absolut tanpa user:password — fetch() menolak URL relatif bila halaman dibuka lewat https://user:pass@host
 const apiUrl = (p) => new URL(p, location.origin);
-const state = { config: null, trx: [], prev: [], page: 0, leads: [], charts: {} };
+const state = { config: null, trx: [], prev: [], page: 0, leads: [], charts: {}, cmp: null, allPlatforms: false };
 
 // ---------- format ----------
 const rupiah = (n) => 'Rp' + Math.round(n || 0).toLocaleString('id-ID');
@@ -31,6 +31,23 @@ const fmtDate = (d) => d.toISOString().slice(0, 10);
 const addDays = (s, n) => fmtDate(new Date(toDate(s).getTime() + n * 86400000));
 const daysBetween = (a, b) => Math.round((toDate(b) - toDate(a)) / 86400000) + 1;
 const dateLabel = (s) => toDate(s).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+
+// Periode pembanding: periode sama tahun lalu (default) atau N hari tepat sebelumnya
+function shiftYear(s, n) {
+  const [y, m, d] = s.split('-').map(Number);
+  const last = new Date(Date.UTC(y + n, m, 0)).getUTCDate(); // 29 Feb → 28 Feb
+  return fmtDate(new Date(Date.UTC(y + n, m - 1, Math.min(d, last))));
+}
+function compareRange(mode, start, end) {
+  const days = daysBetween(start, end);
+  if (mode === 'prev') {
+    const e = addDays(start, -1);
+    return { mode, start: addDays(e, -(days - 1)), end: e, short: `${days} hari sebelumnya`, series: 'Omzet periode sebelumnya' };
+  }
+  return { mode, start: shiftYear(start, -1), end: shiftYear(end, -1), short: 'tahun lalu', series: 'Omzet tahun lalu' };
+}
+const rangeLabel = (a, b) => (a === b ? `${dateLabel(a)} ${a.slice(0, 4)}` : `${dateLabel(a)} – ${dateLabel(b)} ${b.slice(0, 4)}`);
+const platformName = (slug) => (slug === 'all' ? 'Semua platform' : state.config?.platforms?.find((p) => p.slug === slug)?.name || slug);
 
 function presetRange(preset, today) {
   const [y, m] = today.split('-').map(Number);
@@ -141,7 +158,7 @@ function kpiCard(label, value, cur, prev, { invert = false, fmt } = {}) {
     const ch = (cur - prev) / Math.abs(prev);
     const good = invert ? ch < 0 : ch > 0;
     const arrow = ch > 0 ? '▲' : ch < 0 ? '▼' : '•';
-    delta = `<div class="delta ${ch === 0 ? '' : good ? 'up' : 'down'}">${arrow} ${pct(Math.abs(ch))} <span class="muted">vs periode sebelumnya (${fmt ? fmt(prev) : num(prev)})</span></div>`;
+    delta = `<div class="delta ${ch === 0 ? '' : good ? 'up' : 'down'}">${arrow} ${pct(Math.abs(ch))} <span class="muted">vs ${state.cmp.short} (${fmt ? fmt(prev) : num(prev)})</span></div>`;
   } else {
     delta = '<div class="delta muted">belum ada pembanding</div>';
   }
@@ -168,7 +185,7 @@ function renderInsights(rows, s, p, range) {
   }
   if (p.revenue > 0) {
     const ch = (s.revenue - p.revenue) / p.revenue;
-    out.push(`Omzet <b>${ch >= 0 ? 'naik' : 'turun'} ${pct(Math.abs(ch))}</b> dibanding ${range.days} hari sebelumnya (${rupiahShort(p.revenue)} → ${rupiahShort(s.revenue)}).${ch < 0 ? ' Cek apakah traffic (jumlah checkout) yang turun atau conversion-nya.' : ''}`);
+    out.push(`Omzet <b>${ch >= 0 ? 'naik' : 'turun'} ${pct(Math.abs(ch))}</b> dibanding ${state.cmp.mode === 'yoy' ? 'periode sama tahun lalu' : `${range.days} hari sebelumnya`} (${rangeLabel(state.cmp.start, state.cmp.end)}: ${rupiahShort(p.revenue)} → ${rupiahShort(s.revenue)}).${ch < 0 ? ' Cek apakah traffic (jumlah checkout) yang turun atau conversion-nya.' : ''}`);
     if (p.total > 0) {
       const trafficCh = (s.total - p.total) / p.total;
       const convCh = s.conversion - p.conversion;
@@ -240,6 +257,11 @@ function chart(id, config) {
 function renderTrend(rows, range) {
   const labels = [];
   for (let d = range.start; d <= range.end; d = addDays(d, 1)) labels.push(d);
+  // omzet pembanding disejajarkan per urutan hari (hari ke-1 vs hari ke-1, dst.)
+  const cmpRev = new Map();
+  for (const t of state.prev) if (t.status === 1) cmpRev.set(t.day, (cmpRev.get(t.day) || 0) + t.nominal);
+  const cmpDays = [];
+  for (let d = state.cmp.start; d <= state.cmp.end && cmpDays.length < labels.length; d = addDays(d, 1)) cmpDays.push(d);
   const by = new Map(labels.map((d) => [d, { rev: 0, ok: 0, all: 0 }]));
   for (const t of rows) {
     const g = by.get(t.day);
@@ -251,7 +273,8 @@ function renderTrend(rows, range) {
     data: {
       labels: labels.map(dateLabel),
       datasets: [
-        { type: 'bar', label: 'Omzet', data: labels.map((d) => by.get(d).rev), backgroundColor: css('--s1'), borderRadius: 4, yAxisID: 'y' },
+        { type: 'bar', label: 'Omzet', data: labels.map((d) => by.get(d).rev), backgroundColor: css('--s1'), borderRadius: 4, yAxisID: 'y', order: 2 },
+        { type: 'line', label: state.cmp.series, data: labels.map((_, i) => (cmpDays[i] ? cmpRev.get(cmpDays[i]) || 0 : null)), borderColor: css('--s7'), backgroundColor: css('--s7'), borderWidth: 2, pointRadius: labels.length > 45 ? 0 : 2, tension: 0.3, yAxisID: 'y', order: 0, cmpDays },
         { type: 'line', label: 'Transaksi sukses', data: labels.map((d) => by.get(d).ok), borderColor: css('--s3'), backgroundColor: css('--s3'), borderWidth: 2, tension: 0.3, pointRadius: labels.length > 45 ? 0 : 2, yAxisID: 'y1' },
         { type: 'line', label: 'Total checkout', data: labels.map((d) => by.get(d).all), borderColor: css('--s2'), backgroundColor: css('--s2'), borderWidth: 2, borderDash: [5, 4], pointRadius: 0, tension: 0.3, yAxisID: 'y1' },
       ],
@@ -259,7 +282,7 @@ function renderTrend(rows, range) {
     options: {
       maintainAspectRatio: false,
       interaction: { mode: 'index', intersect: false },
-      plugins: { tooltip: { callbacks: { label: (c) => `${c.dataset.label}: ${c.dataset.yAxisID === 'y' ? rupiah(c.raw) : num(c.raw)}` } } },
+      plugins: { legend: { labels: { sort: (a, b) => a.datasetIndex - b.datasetIndex } }, tooltip: { callbacks: { label: (c) => `${c.dataset.label}${c.dataset.cmpDays ? ` (${rangeLabel(c.dataset.cmpDays[c.dataIndex], c.dataset.cmpDays[c.dataIndex])})` : ''}: ${c.dataset.yAxisID === 'y' ? rupiah(c.raw) : num(c.raw)}` } } },
       scales: {
         y: { position: 'left', ticks: { callback: (v) => rupiahShort(v) }, grid: { drawOnChartArea: true } },
         y1: { position: 'right', grid: { drawOnChartArea: false }, ticks: { precision: 0 } },
@@ -351,6 +374,30 @@ function table(id, cols, rows, empty = 'Tidak ada data') {
   $(id).innerHTML = head + `<tbody>${body}</tbody>`;
 }
 
+function renderPlatforms(rows, prevRows, s) {
+  $('platformCard').hidden = !state.allPlatforms;
+  if (!state.allPlatforms) return;
+  const prev = new Map(groupBy(prevRows, (t) => t.platform).map((g) => [g.key, g]));
+  const g = groupBy(rows, (t) => t.platform).sort((a, b) => b.revenue - a.revenue);
+  const max = Math.max(1, ...g.map((x) => x.revenue));
+  $('platformCmpNote').textContent = `Pertumbuhan vs ${state.cmp.short} (${rangeLabel(state.cmp.start, state.cmp.end)})`;
+  const growth = (cur, old) => {
+    if (!old) return '<span class="muted">baru</span>';
+    const ch = (cur - old) / old;
+    return `<span class="${ch >= 0 ? 'up' : 'down'}">${ch >= 0 ? '▲' : '▼'} ${pct(Math.abs(ch))}</span>`;
+  };
+  table('platformTable', [
+    { label: 'Platform', render: (r) => `<b>${esc(platformName(r.key))}</b>` },
+    { label: 'Checkout', num: true, render: (r) => num(r.total) },
+    { label: 'Sukses', num: true, render: (r) => num(r.success) },
+    { label: 'Conversion', num: true, render: (r) => pct(r.conversion) },
+    { label: 'Omzet', num: true, render: (r) => rupiah(r.revenue) },
+    { label: `Omzet ${state.cmp.short}`, num: true, render: (r) => rupiah(prev.get(r.key)?.revenue || 0) },
+    { label: 'Pertumbuhan', num: true, render: (r) => growth(r.revenue, prev.get(r.key)?.revenue) },
+    { label: 'Kontribusi', render: (r) => `<div style="display:flex;gap:6px;align-items:center"><div class="bar" style="width:${Math.round((r.revenue / max) * 100)}px"></div><span class="muted">${pct(s.revenue ? r.revenue / s.revenue : 0)}</span></div>` },
+  ], g);
+}
+
 function renderProducts(rows, s) {
   const g = groupBy(rows, (t) => t.product).sort((a, b) => b.revenue - a.revenue);
   const max = Math.max(1, ...g.map((x) => x.revenue));
@@ -394,10 +441,13 @@ function waLink(t) {
   return `https://wa.me/${t.phone62}?text=${encodeURIComponent(msg)}`;
 }
 
+const platformCol = () => (state.allPlatforms ? [{ label: 'Platform', render: (r) => esc(platformName(r.platform)) }] : []);
+
 function renderLeads() {
   table('leadTable', [
     { label: 'Status', render: (r) => `<span class="pill s${r.status}">${STATUS[r.status]}</span>` },
     { label: 'Tanggal', render: (r) => esc(r.date) },
+    ...platformCol(),
     { label: 'Nama', render: (r) => esc(r.customer_name) },
     { label: 'Produk', wrap: true, render: (r) => esc(r.product) },
     { label: 'Nominal', num: true, render: (r) => rupiah(r.nominal) },
@@ -426,6 +476,7 @@ function renderTrxTable() {
     { label: 'Trx ID', render: (r) => esc(r.trx_id) },
     { label: 'Dibuat', render: (r) => esc(r.date) },
     { label: 'Dibayar', render: (r) => esc(r.paid_date || '–') },
+    ...platformCol(),
     { label: 'Customer', render: (r) => esc(r.customer_name) },
     { label: 'Produk', wrap: true, render: (r) => esc(r.product) },
     { label: 'Tipe', render: (r) => esc(r.product_type) },
@@ -453,7 +504,7 @@ function downloadCsv(name, rows, cols) {
   URL.revokeObjectURL(a.href);
 }
 const TRX_COLS = [
-  ['trx_id', (r) => r.trx_id], ['tanggal', (r) => r.date], ['tanggal_bayar', (r) => r.paid_date], ['customer', (r) => r.customer_name],
+  ['platform', (r) => r.platform], ['trx_id', (r) => r.trx_id], ['tanggal', (r) => r.date], ['tanggal_bayar', (r) => r.paid_date], ['customer', (r) => r.customer_name],
   ['hp', (r) => r.phone62], ['email', (r) => r.customer_email], ['produk', (r) => r.product], ['tipe', (r) => r.product_type],
   ['metode_bayar', (r) => r.payment_method], ['promo', (r) => r.promo_code], ['harga', (r) => r.product_price], ['nominal', (r) => r.nominal],
   ['status', (r) => STATUS[r.status]],
@@ -469,7 +520,7 @@ async function fetchRange(platform, start, end) {
 }
 
 async function load() {
-  const platform = $('platform').value.trim();
+  const platform = $('platform').value;
   const [start, end] = presetRange($('preset').value, state.config.today);
   if (!start || !end || end < start) {
     showError('Rentang tanggal tidak valid.');
@@ -477,18 +528,20 @@ async function load() {
   }
   const days = daysBetween(start, end);
   const range = { start, end, days };
-  const prevEnd = addDays(start, -1);
-  const prevStart = addDays(prevEnd, -(days - 1));
+  const cmp = compareRange($('compare').value, start, end);
 
   $('loading').hidden = false;
   $('errorBanner').hidden = true;
   try {
-    const [cur, prev] = await Promise.all([fetchRange(platform, start, end), fetchRange(platform, prevStart, prevEnd).catch(() => ({ data: [] }))]);
+    const [cur, prev] = await Promise.all([fetchRange(platform, start, end), fetchRange(platform, cmp.start, cmp.end).catch(() => ({ data: [] }))]);
+    state.cmp = cmp;
+    state.allPlatforms = platform === 'all';
     state.trx = cur.data.map(normalize);
     state.prev = prev.data.map(normalize);
     state.page = 0;
     $('demoBanner').hidden = !cur.demo;
-    $('lastUpdated').textContent = `${platform} • ${dateLabel(start)} – ${dateLabel(end)} ${end.slice(0, 4)} • diperbarui ${new Date(cur.fetched_at).toLocaleTimeString('id-ID')}`;
+    $('lastUpdated').textContent = `${platformName(platform)} • ${rangeLabel(start, end)} vs ${rangeLabel(cmp.start, cmp.end)} • diperbarui ${new Date(cur.fetched_at).toLocaleTimeString('id-ID')}`;
+    if (cur.warnings?.length) showError(`Sebagian platform gagal dimuat: ${cur.warnings.join('; ')}`);
     saveFilters();
     render(range);
   } catch (err) {
@@ -504,6 +557,7 @@ function render(range) {
   state.leads = buildLeads(state.trx);
   renderKpis(s, p);
   renderInsights(state.trx, s, p, range);
+  renderPlatforms(state.trx, state.prev, s);
   renderTrend(state.trx, range);
   renderStatus(state.trx);
   renderPayment(state.trx);
@@ -523,14 +577,15 @@ function showError(msg) {
 
 function saveFilters() {
   try {
-    localStorage.setItem('dashsan.filters', JSON.stringify({ platform: $('platform').value, preset: $('preset').value, start: $('startDate').value, end: $('endDate').value }));
+    localStorage.setItem('dashsan.filters', JSON.stringify({ platform: $('platform').value, compare: $('compare').value, preset: $('preset').value, start: $('startDate').value, end: $('endDate').value }));
   } catch { /* storage tidak tersedia */ }
 }
 function restoreFilters() {
   try {
     const f = JSON.parse(localStorage.getItem('dashsan.filters') || 'null');
     if (!f) return;
-    $('platform').value = f.platform || $('platform').value;
+    if ([...$('platform').options].some((o) => o.value === f.platform)) $('platform').value = f.platform;
+    if (['yoy', 'prev'].includes(f.compare)) $('compare').value = f.compare;
     $('preset').value = f.preset || '30';
     $('startDate').value = f.start || '';
     $('endDate').value = f.end || '';
@@ -540,6 +595,7 @@ function restoreFilters() {
 // ---------- init ----------
 async function init() {
   state.config = await fetch(apiUrl('/api/config')).then((r) => r.json());
+  for (const p of state.config.platforms || []) $('platform').add(new Option(p.name, p.slug));
   $('platform').value = state.config.defaultPlatform;
   $('endDate').value = state.config.today;
   $('startDate').value = addDays(state.config.today, -29);
@@ -547,7 +603,17 @@ async function init() {
   const syncCustom = () => $('filters').classList.toggle('custom', $('preset').value === 'custom');
   syncCustom();
 
-  $('preset').addEventListener('change', () => { syncCustom(); if ($('preset').value !== 'custom') load(); });
+  // label opsi "Periode sebelumnya" ikut panjang periode, mis. "7 hari sebelumnya"
+  const syncCompareLabel = () => {
+    const [a, b] = presetRange($('preset').value, state.config.today);
+    if (a && b && b >= a) $('compare').options[1].text = `${daysBetween(a, b)} hari sebelumnya`;
+  };
+  syncCompareLabel();
+  $('preset').addEventListener('change', () => { syncCustom(); syncCompareLabel(); if ($('preset').value !== 'custom') load(); });
+  $('startDate').addEventListener('change', syncCompareLabel);
+  $('endDate').addEventListener('change', syncCompareLabel);
+  $('platform').addEventListener('change', load);
+  $('compare').addEventListener('change', load);
   $('filters').addEventListener('submit', (e) => { e.preventDefault(); load(); });
   $('search').addEventListener('input', () => { state.page = 0; renderTrxTable(); });
   $('statusFilter').addEventListener('change', () => { state.page = 0; renderTrxTable(); });

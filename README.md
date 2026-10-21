@@ -48,6 +48,8 @@ API key dikirim di header `Authorization: <key>` (tanpa `Bearer`). Jika dashboar
    - `API_KEY` — API key Markaz
    - `DASHBOARD_PASSWORD` — password untuk tim sales (wajib; tanpa ini dashboard menolak semua akses)
    - `DASHBOARD_USER` — opsional, default `sales`
+   - `PLATFORMS` — opsional, daftar platform untuk dropdown (`slug:Nama,slug:Nama`). API tidak punya
+     endpoint daftar platform, jadi platform baru perlu ditambahkan di sini.
 3. Deploy. Saat membuka link, browser meminta username & password.
 
 Vercel menjalankan `server.js` sebagai satu fungsi untuk semua request, sehingga halaman dan data

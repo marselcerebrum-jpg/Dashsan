@@ -17,7 +17,19 @@ loadEnv(path.join(__dirname, '.env'));
 const PORT = Number(process.env.PORT || 3000);
 const API_BASE_URL = (process.env.API_BASE_URL ?? 'https://markaz.cerehub.id').replace(/\/+$/, '');
 const API_KEY = process.env.API_KEY || '';
-const DEFAULT_PLATFORM = process.env.DEFAULT_PLATFORM || 'jadiasn';
+// Daftar platform untuk dropdown, format "slug:Nama,slug:Nama". API Markaz tidak punya endpoint daftar
+// platform; slug di bawah adalah yang terbukti aktif (Okt 2026). Tambah lewat env PLATFORMS bila ada yang baru.
+const PLATFORMS = (process.env.PLATFORMS ||
+  'jadiasn:JadiASN,jadibumn:JadiBUMN,cerebrum:Cerebrum,jadipolisi:JadiPolisi,jadiprajurit:JadiPrajurit,' +
+  'jadisekdin:JadiSekdin,jadiojk:JadiOJK,jadipppk:JadiPPPK,jadibeasiswa:JadiBeasiswa')
+  .split(',')
+  .map((x) => x.trim())
+  .filter(Boolean)
+  .map((x) => {
+    const [slug, name] = x.split(':');
+    return { slug: slug.trim(), name: (name || slug).trim() };
+  });
+const DEFAULT_PLATFORM = process.env.DEFAULT_PLATFORM || 'all';
 const DEMO = process.env.DEMO === '1' || !API_BASE_URL || !API_KEY;
 
 // API key dikirim apa adanya di header Authorization (sudah dicek ke markaz.cerehub.id).
@@ -118,10 +130,33 @@ async function requestApi(mode, platform, start, end, status) {
   return Array.isArray(body.data) ? body.data : [];
 }
 
+// platform "all" = gabungan semua platform di PLATFORMS. Platform yang gagal dilewati dan dilaporkan
+// di `warnings`, kecuali semuanya gagal.
 async function getTransactions(platform, start, end, status) {
+  const slugs = platform === 'all' ? PLATFORMS.map((p) => p.slug) : [platform];
+  const rows = [];
+  const warnings = [];
+  let lastErr;
+  for (let i = 0; i < slugs.length; i += 3) {
+    const results = await Promise.allSettled(
+      slugs.slice(i, i + 3).map((slug) => getPlatformTransactions(slug, start, end, status)),
+    );
+    results.forEach((r, j) => {
+      if (r.status === 'fulfilled') rows.push(...r.value);
+      else {
+        lastErr = r.reason;
+        warnings.push(`${slugs[i + j]}: ${r.reason.message}`);
+      }
+    });
+  }
+  if (warnings.length === slugs.length) throw lastErr;
+  return { rows, warnings };
+}
+
+async function getPlatformTransactions(platform, start, end, status) {
   const rows = await fetchCreatedRange(platform, fmt(addDays(toDate(start), -LOOKBACK_DAYS)), end, status);
   return rows
-    .map((t) => ({ ...t, closing_date: closingDate(t) }))
+    .map((t) => ({ ...t, platform, closing_date: closingDate(t) }))
     .filter((t) => t.closing_date >= start && t.closing_date <= end);
 }
 
@@ -138,7 +173,10 @@ async function fetchCreatedRange(platform, start, end, status) {
   }
   // hilangkan duplikat bila ada
   const seen = new Set();
-  return out.filter((t) => (seen.has(t.id) ? false : seen.add(t.id)));
+  return out.filter((t) => {
+    const k = t.trx_id || t.id;
+    return seen.has(k) ? false : seen.add(k);
+  });
 }
 
 // ---------- data demo ----------
@@ -220,7 +258,7 @@ function sendJson(res, code, obj) {
 
 async function handleApi(req, res, url) {
   if (url.pathname === '/api/config') {
-    return sendJson(res, 200, { demo: DEMO, defaultPlatform: DEFAULT_PLATFORM, today: todayStr() });
+    return sendJson(res, 200, { demo: DEMO, defaultPlatform: DEFAULT_PLATFORM, platforms: PLATFORMS, today: todayStr() });
   }
   if (url.pathname !== '/api/transactions') return sendJson(res, 404, { status: false, message: 'Not found' });
 
@@ -236,8 +274,8 @@ async function handleApi(req, res, url) {
   if (status !== '' && !/^[0-4]$/.test(status)) return sendJson(res, 400, { status: false, message: 'status harus 0-4' });
 
   try {
-    const data = await getTransactions(platform, start, end, status);
-    sendJson(res, 200, { status: true, demo: DEMO, fetched_at: new Date().toISOString(), data });
+    const { rows, warnings } = await getTransactions(platform, start, end, status);
+    sendJson(res, 200, { status: true, demo: DEMO, fetched_at: new Date().toISOString(), warnings, data: rows });
   } catch (err) {
     console.error('[api]', err.message);
     sendJson(res, err.code || 502, { status: false, message: err.message, data: null });

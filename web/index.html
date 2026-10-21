@@ -15,7 +15,7 @@
     </div>
     <form id="filters" class="filters">
       <label>Platform
-        <input id="platform" type="text" required pattern="[a-zA-Z0-9_-]+" />
+        <select id="platform"><option value="all">Semua platform</option></select>
       </label>
       <label>Periode
         <select id="preset">
@@ -31,6 +31,12 @@
       </label>
       <label class="custom-range">Dari <input id="startDate" type="date" /></label>
       <label class="custom-range">Sampai <input id="endDate" type="date" /></label>
+      <label>Bandingkan dengan
+        <select id="compare">
+          <option value="yoy" selected>Periode sama tahun lalu</option>
+          <option value="prev">Periode sebelumnya</option>
+        </select>
+      </label>
       <button type="submit" class="btn primary">Tampilkan</button>
     </form>
   </header>
@@ -46,6 +52,11 @@
     <section class="card" style="--card-c: var(--s7)">
       <h2>Insight &amp; Rekomendasi Strategi</h2>
       <ul id="insights" class="insights"></ul>
+    </section>
+
+    <section class="card" id="platformCard" style="--card-c: var(--s6)" hidden>
+      <div class="card-head"><h2>Performa per Platform</h2><span class="muted" id="platformCmpNote"></span></div>
+      <div class="table-wrap"><table id="platformTable"></table></div>
     </section>
 
     <section class="card" style="--card-c: var(--s1)">
