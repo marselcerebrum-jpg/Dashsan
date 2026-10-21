@@ -133,22 +133,43 @@ function groupBy(rows, keyFn) {
   return [...m.values()].map((g) => ({ ...g, conversion: g.total ? g.success / g.total : NaN }));
 }
 
-function buildLeads(rows) {
-  // Customer+produk yang punya transaksi non-sukses dan TIDAK punya transaksi sukses untuk produk itu
-  const boughtKey = new Set(rows.filter((t) => t.status === 1).map((t) => `${t.custKey}|${t.product}`));
-  const map = new Map();
+// Satu baris per orang (per platform). Orang dikenali dari nomor HP ATAU email, jadi checkout ulang
+// dengan email/HP berbeda tetap terdeteksi. Orang dikeluarkan dari daftar bila punya transaksi sukses
+// di periode ini atau sesudahnya sampai hari ini (`later`) — artinya sudah jadi beli/premium.
+function personIds(t) {
+  const email = String(t.customer_email || '').trim().toLowerCase();
+  return [t.phone62 && `${t.platform}|p:${t.phone62}`, email && `${t.platform}|e:${email}`].filter(Boolean);
+}
+function buildLeads(rows, later) {
+  const bought = new Set();
+  for (const t of [...rows, ...later]) if (t.status === 1) personIds(t).forEach((id) => bought.add(id));
+
+  // gabungkan semua percobaan gagal milik orang yang sama (cocok lewat HP atau email)
+  const owner = new Map(); // id → objek orang
+  const people = [];
   for (const t of rows) {
     if (t.status === 1) continue;
-    const k = `${t.custKey}|${t.product}`;
-    if (boughtKey.has(k)) continue;
-    const cur = map.get(k);
-    if (!cur || t.date > cur.last.date) map.set(k, { last: t, attempts: (cur?.attempts || 0) + 1 });
-    else cur.attempts++;
+    const ids = personIds(t);
+    let p = ids.map((id) => owner.get(id)).find(Boolean);
+    if (!p) {
+      p = { attempts: [], ids: new Set() };
+      people.push(p);
+    }
+    p.attempts.push(t);
+    ids.forEach((id) => { p.ids.add(id); owner.set(id, p); });
+  }
+
+  let converted = 0;
+  const leads = [];
+  for (const p of people) {
+    if ([...p.ids].some((id) => bought.has(id))) { converted++; continue; }
+    const last = p.attempts.reduce((a, b) => (b.date > a.date ? b : a));
+    const products = [...new Set(p.attempts.map((t) => t.product))];
+    leads.push({ ...last, attempts: p.attempts.length, products, firstDate: p.attempts.reduce((a, b) => (b.date < a.date ? b : a)).date });
   }
   const priority = { 0: 0, 2: 1, 3: 2, 4: 1 };
-  return [...map.values()]
-    .map(({ last, attempts }) => ({ ...last, attempts }))
-    .sort((a, b) => priority[a.status] - priority[b.status] || b.date.localeCompare(a.date));
+  leads.sort((a, b) => priority[a.status] - priority[b.status] || b.date.localeCompare(a.date));
+  return { leads, converted };
 }
 
 // ---------- render: KPI ----------
@@ -444,12 +465,15 @@ function waLink(t) {
 const platformCol = () => (state.allPlatforms ? [{ label: 'Platform', render: (r) => esc(platformName(r.platform)) }] : []);
 
 function renderLeads() {
+  const checkedUntil = state.config.today;
+  $('leadNote').textContent = `${num(state.leads.length)} orang unik belum beli • dicek sampai ${rangeLabel(checkedUntil, checkedUntil)}` +
+    (state.leadsConverted ? ` • ${num(state.leadsConverted)} orang dikeluarkan karena sudah beli` : '');
   table('leadTable', [
     { label: 'Status', render: (r) => `<span class="pill s${r.status}">${STATUS[r.status]}</span>` },
-    { label: 'Tanggal', render: (r) => esc(r.date) },
+    { label: 'Terakhir', render: (r) => esc(r.date) },
     ...platformCol(),
     { label: 'Nama', render: (r) => esc(r.customer_name) },
-    { label: 'Produk', wrap: true, render: (r) => esc(r.product) },
+    { label: 'Produk', wrap: true, render: (r) => esc(r.product) + (r.products.length > 1 ? ` <span class="muted">(+${r.products.length - 1} produk lain)</span>` : '') },
     { label: 'Nominal', num: true, render: (r) => rupiah(r.nominal) },
     { label: 'Percobaan', num: true, render: (r) => num(r.attempts) },
     { label: 'Bayar via', render: (r) => esc(r.payment_method) },
@@ -511,8 +535,9 @@ const TRX_COLS = [
 ];
 
 // ---------- load ----------
-async function fetchRange(platform, start, end) {
+async function fetchRange(platform, start, end, status = '') {
   const qs = new URLSearchParams({ platform, start_date: start, end_date: end });
+  if (status !== '') qs.set('status', status);
   const res = await fetch(apiUrl(`/api/transactions?${qs}`));
   const body = await res.json().catch(() => ({}));
   if (!res.ok || !body.status) throw new Error(body.message || `Gagal memuat data (HTTP ${res.status})`);
@@ -533,7 +558,11 @@ async function load() {
   $('loading').hidden = false;
   $('errorBanner').hidden = true;
   try {
-    const [cur, prev] = await Promise.all([fetchRange(platform, start, end), fetchRange(platform, cmp.start, cmp.end).catch(() => ({ data: [] }))]);
+    // transaksi sukses sesudah periode s/d hari ini, untuk mengecek apakah calon pembeli akhirnya jadi beli
+    const today = state.config.today;
+    const laterReq = end < today ? fetchRange(platform, addDays(end, 1), today, '1') : Promise.resolve({ data: [] });
+    const [cur, prev, later] = await Promise.all([fetchRange(platform, start, end), fetchRange(platform, cmp.start, cmp.end).catch(() => ({ data: [] })), laterReq]);
+    state.later = later.data.map(normalize);
     state.cmp = cmp;
     state.allPlatforms = platform === 'all';
     state.trx = cur.data.map(normalize);
@@ -541,7 +570,7 @@ async function load() {
     state.page = 0;
     $('demoBanner').hidden = !cur.demo;
     $('lastUpdated').textContent = `${platformName(platform)} • ${rangeLabel(start, end)} vs ${rangeLabel(cmp.start, cmp.end)} • diperbarui ${new Date(cur.fetched_at).toLocaleTimeString('id-ID')}`;
-    if (cur.warnings?.length) showError(`Sebagian platform gagal dimuat: ${cur.warnings.join('; ')}`);
+    if (cur.warnings?.length) showError(`Perhatian, sebagian data tidak lengkap: ${cur.warnings.join("; ")}. Angka di bawah tidak termasuk data tersebut.`);
     saveFilters();
     render(range);
   } catch (err) {
@@ -554,7 +583,9 @@ async function load() {
 function render(range) {
   const s = summarize(state.trx);
   const p = summarize(state.prev);
-  state.leads = buildLeads(state.trx);
+  const { leads, converted } = buildLeads(state.trx, state.later);
+  state.leads = leads;
+  state.leadsConverted = converted;
   renderKpis(s, p);
   renderInsights(state.trx, s, p, range);
   renderPlatforms(state.trx, state.prev, s);
@@ -620,7 +651,7 @@ async function init() {
   $('prevPage').addEventListener('click', () => { state.page--; renderTrxTable(); });
   $('nextPage').addEventListener('click', () => { state.page++; renderTrxTable(); });
   $('exportTrx').addEventListener('click', () => downloadCsv('transaksi.csv', filteredTrx(), TRX_COLS));
-  $('exportLeads').addEventListener('click', () => downloadCsv('follow-up-sales.csv', state.leads, [...TRX_COLS, ['jumlah_percobaan', (r) => r.attempts], ['link_whatsapp', waLink]]));
+  $('exportLeads').addEventListener('click', () => downloadCsv('follow-up-sales.csv', state.leads, [...TRX_COLS, ['jumlah_percobaan', (r) => r.attempts], ['percobaan_pertama', (r) => r.firstDate], ['semua_produk_dicoba', (r) => r.products.join(' | ')], ['link_whatsapp', waLink]]));
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => state.trx.length && load());
 
   load();

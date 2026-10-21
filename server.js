@@ -21,7 +21,8 @@ const API_KEY = process.env.API_KEY || '';
 // platform; slug di bawah adalah yang terbukti aktif (Okt 2026). Tambah lewat env PLATFORMS bila ada yang baru.
 const PLATFORMS = (process.env.PLATFORMS ||
   'jadiasn:JadiASN,jadibumn:JadiBUMN,cerebrum:Cerebrum,jadipolisi:JadiPolisi,jadiprajurit:JadiPrajurit,' +
-  'jadisekdin:JadiSekdin,jadiojk:JadiOJK,jadipppk:JadiPPPK,jadibeasiswa:JadiBeasiswa')
+  'jadisekdin:JadiSekdin,jadiojk:JadiOJK,jadipppk:JadiPPPK,jadibeasiswa:JadiBeasiswa,jadipcpm:JadiPCPM,' +
+  'jagotpa:JagoTPA,psikoteskerja:Psikotes Kerja,toeflacademy:TOEFL Academy')
   .split(',')
   .map((x) => x.trim())
   .filter(Boolean)
@@ -119,12 +120,13 @@ async function requestApi(mode, platform, start, end, status) {
   try {
     body = await res.json();
   } catch {
-    throw Object.assign(new Error(`Respons API bukan JSON (HTTP ${res.status})`), { code: 502 });
+    throw Object.assign(new Error(`Respons API bukan JSON (HTTP ${res.status})`), { code: 502, httpStatus: res.status });
   }
   if (!res.ok || body.status === false) {
     const unauthorized = res.status === 401 || res.status === 403 || /api key/i.test(body.message || '');
     throw Object.assign(new Error(body.message || `API error HTTP ${res.status}`), {
       code: unauthorized ? 401 : 502,
+      httpStatus: res.status,
     });
   }
   return Array.isArray(body.data) ? body.data : [];
@@ -137,37 +139,75 @@ async function getTransactions(platform, start, end, status) {
   const rows = [];
   const warnings = [];
   let lastErr;
+  let failed = 0;
   for (let i = 0; i < slugs.length; i += 3) {
     const results = await Promise.allSettled(
       slugs.slice(i, i + 3).map((slug) => getPlatformTransactions(slug, start, end, status)),
     );
     results.forEach((r, j) => {
-      if (r.status === 'fulfilled') rows.push(...r.value);
-      else {
+      if (r.status === 'fulfilled') {
+        rows.push(...r.value.rows);
+        warnings.push(...r.value.warnings);
+      } else {
         lastErr = r.reason;
+        failed++;
         warnings.push(`${slugs[i + j]}: ${r.reason.message}`);
       }
     });
   }
-  if (warnings.length === slugs.length) throw lastErr;
+  if (failed === slugs.length) throw lastErr;
   return { rows, warnings };
 }
 
 async function getPlatformTransactions(platform, start, end, status) {
-  const rows = await fetchCreatedRange(platform, fmt(addDays(toDate(start), -LOOKBACK_DAYS)), end, status);
-  return rows
-    .map((t) => ({ ...t, platform, closing_date: closingDate(t) }))
-    .filter((t) => t.closing_date >= start && t.closing_date <= end);
+  const badDays = [];
+  const rows = await fetchCreatedRange(platform, fmt(addDays(toDate(start), -LOOKBACK_DAYS)), end, status, badDays);
+  // hari rusak di masa lookback hanya memengaruhi segelintir transaksi lintas tengah malam → tidak dilaporkan
+  const warnings = badDays
+    .filter((d) => d >= start)
+    .map((d) => `${platform}: data tanggal ${d} tidak bisa diambil (API Markaz error)`);
+  return {
+    rows: rows
+      .map((t) => ({ ...t, platform, closing_date: closingDate(t) }))
+      .filter((t) => t.closing_date >= start && t.closing_date <= end),
+    warnings,
+  };
 }
 
-async function fetchCreatedRange(platform, start, end, status) {
+// API Markaz kadang error 500 untuk satu hari tertentu (data rusak di sisi mereka), dan error itu membuat
+// seluruh rentang gagal. Rentang yang gagal dipecah dua terus sampai per hari; hari yang tetap gagal dilewati.
+const badDayCache = new Map();
+async function fetchChunkSafe(platform, start, end, status, badDays) {
+  const bad = badDayCache.get(`${platform}|${start}|${status}`);
+  if (start === end && bad && bad > Date.now()) {
+    badDays.push(start);
+    return [];
+  }
+  try {
+    return await fetchChunk(platform, start, end, status);
+  } catch (err) {
+    if (!(err.httpStatus >= 500)) throw err;
+    if (start === end) {
+      badDayCache.set(`${platform}|${start}|${status}`, Date.now() + 30 * 60 * 1000);
+      badDays.push(start);
+      return [];
+    }
+    const half = Math.floor((toDate(end) - toDate(start)) / 86400000 / 2);
+    const mid = fmt(addDays(toDate(start), half));
+    const left = await fetchChunkSafe(platform, start, mid, status, badDays);
+    const right = await fetchChunkSafe(platform, fmt(addDays(toDate(mid), 1)), end, status, badDays);
+    return [...left, ...right];
+  }
+}
+
+async function fetchCreatedRange(platform, start, end, status, badDays = []) {
   if (DEMO) return demoTransactions(platform, start, end, status);
   const chunks = splitRange(start, end);
   const out = [];
   // maksimal 3 request paralel agar tidak membebani API
   for (let i = 0; i < chunks.length; i += 3) {
     const part = await Promise.all(
-      chunks.slice(i, i + 3).map(([s, e]) => fetchChunk(platform, s, e, status)),
+      chunks.slice(i, i + 3).map(([s, e]) => fetchChunkSafe(platform, s, e, status, badDays)),
     );
     for (const p of part) out.push(...p);
   }
