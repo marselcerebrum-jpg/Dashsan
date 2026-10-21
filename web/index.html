@@ -113,6 +113,17 @@
           <button id="exportLeads" class="btn">Export CSV</button>
         </div>
       </div>
+      <div class="msg-editor">
+        <label for="msgTemplate"><b>Pesan WhatsApp custom</b> <span class="muted">— klik variabel untuk menyisipkan; tiap customer otomatis terisi datanya sendiri</span></label>
+        <textarea id="msgTemplate" rows="4" spellcheck="false"></textarea>
+        <div class="chips" id="msgVars"></div>
+        <div class="msg-preview"><span class="muted">Contoh untuk customer pertama:</span><div id="msgPreview"></div></div>
+        <div class="actions">
+          <button id="applyMsg" type="button" class="btn primary">Buat pesan untuk semua</button>
+          <button id="resetMsg" type="button" class="btn">Kembalikan pesan default</button>
+          <span id="msgStatus" class="muted"></span>
+        </div>
+      </div>
       <div class="table-wrap scroll"><table id="leadTable"></table></div>
     </section>
 

@@ -390,7 +390,7 @@ function renderHeatmap(rows) {
 function table(id, cols, rows, empty = 'Tidak ada data') {
   const head = `<thead><tr>${cols.map((c) => `<th class="${c.num ? 'num' : ''}">${c.label}</th>`).join('')}</tr></thead>`;
   const body = rows.length
-    ? rows.map((r) => `<tr>${cols.map((c) => `<td class="${c.num ? 'num' : ''} ${c.wrap ? 'wrap' : ''}">${c.render(r)}</td>`).join('')}</tr>`).join('')
+    ? rows.map((r) => `<tr>${cols.map((c) => `<td class="${c.num ? 'num' : ''} ${c.wrap ? 'wrap' : ''} ${c.cls || ''}">${c.render(r)}</td>`).join('')}</tr>`).join('')
     : `<tr><td class="empty" colspan="${cols.length}">${empty}</td></tr>`;
   $(id).innerHTML = head + `<tbody>${body}</tbody>`;
 }
@@ -453,18 +453,87 @@ function renderCustomers(rows) {
   ], g);
 }
 
+// ---------- pesan WhatsApp custom ----------
+// Variabel ditulis dalam kurung siku, mis. "Halo [Nama], ...". Tidak peka huruf besar/kecil.
+const DEFAULT_TEMPLATE = 'Halo Kak [Nama], sebelumnya Kakak sempat memesan "[Produk]" di [Platform] namun belum selesai. Masih berminat? Kami bisa bantu proses pembayarannya 🙏';
+const titleCase = (x) => String(x || '').toLowerCase().replace(/(^|[\s'-])\p{L}/gu, (m) => m.toUpperCase()).trim();
+const MSG_VARS = {
+  'Nama': (t) => titleCase(String(t.customer_name || '').trim().split(/\s+/)[0]),
+  'Nama Lengkap': (t) => titleCase(t.customer_name),
+  'Produk': (t) => t.product || '',
+  'Platform': (t) => platformName(t.platform),
+  'Nominal': (t) => rupiah(t.nominal),
+  'Harga': (t) => rupiah(t.product_price),
+  'Status': (t) => STATUS[t.status] || '',
+  'Tanggal': (t) => (t.day ? rangeLabel(t.day, t.day) : ''),
+  'Metode Bayar': (t) => t.payment_method || '',
+  'Promo': (t) => t.promo_code || '-',
+  'Email': (t) => t.customer_email || '',
+  'HP': (t) => (t.phone62 ? '+' + t.phone62 : ''),
+  'Jumlah Percobaan': (t) => String(t.attempts || 1),
+};
+const varLookup = new Map(Object.entries(MSG_VARS).map(([k, f]) => [k.toLowerCase(), f]));
+// variabel yang tidak dikenal dibiarkan apa adanya supaya salah ketik terlihat
+const fillTemplate = (tpl, t) => tpl.replace(/\[([^\]]+)\]/g, (m, name) => {
+  const f = varLookup.get(name.trim().toLowerCase());
+  return f ? f(t) : m;
+});
+function loadTemplate() {
+  try { return localStorage.getItem('dashsan.msgTemplate') || DEFAULT_TEMPLATE; } catch { return DEFAULT_TEMPLATE; }
+}
+function saveTemplate(tpl) {
+  try { localStorage.setItem('dashsan.msgTemplate', tpl); } catch { /* storage tidak tersedia */ }
+}
+const leadMessage = (t) => fillTemplate(state.msgTemplate || DEFAULT_TEMPLATE, t);
+
 function waLink(t) {
   if (!t.phone62) return '';
-  const first = String(t.customer_name || '').split(' ')[0];
-  const msg = t.status === 0
-    ? `Halo Kak ${first}, kami lihat pesanan "${t.product}" masih menunggu pembayaran. Ada yang bisa kami bantu agar prosesnya lancar?`
-    : `Halo Kak ${first}, sebelumnya Kakak sempat memesan "${t.product}" namun belum selesai. Masih berminat? Kami bisa bantu proses pembayarannya 🙏`;
-  return `https://wa.me/${t.phone62}?text=${encodeURIComponent(msg)}`;
+  return `https://wa.me/${t.phone62}?text=${encodeURIComponent(leadMessage(t))}`;
+}
+
+function renderMsgPreview() {
+  const sample = state.leads[0];
+  const tpl = $('msgTemplate').value;
+  $('msgPreview').textContent = sample ? fillTemplate(tpl, sample) : '(belum ada customer di daftar)';
+  const unknown = [...tpl.matchAll(/\[([^\]]+)\]/g)].map((m) => m[1]).filter((n) => !varLookup.has(n.trim().toLowerCase()));
+  const dirty = tpl !== state.msgTemplate;
+  $('msgStatus').textContent = unknown.length
+    ? `Variabel tidak dikenal: ${[...new Set(unknown)].map((n) => `[${n}]`).join(', ')}`
+    : dirty ? 'Ada perubahan — klik "Buat pesan untuk semua" untuk menerapkan.' : `Pesan sudah dibuat untuk ${num(state.leads.length)} customer.`;
+  $('msgStatus').className = unknown.length ? 'down' : 'muted';
+}
+
+function setupMsgEditor() {
+  state.msgTemplate = loadTemplate();
+  const box = $('msgTemplate');
+  box.value = state.msgTemplate;
+  $('msgVars').innerHTML = '<span class="muted">Variabel:</span>' + Object.keys(MSG_VARS).map((k) => `<button type="button" class="chip" data-var="[${k}]">[${k}]</button>`).join('');
+  $('msgVars').addEventListener('click', (e) => {
+    const v = e.target.closest('.chip')?.dataset.var;
+    if (!v) return;
+    const { selectionStart: a, selectionEnd: b, value } = box;
+    box.value = value.slice(0, a) + v + value.slice(b);
+    box.focus();
+    box.selectionStart = box.selectionEnd = a + v.length;
+    renderMsgPreview();
+  });
+  box.addEventListener('input', renderMsgPreview);
+  $('applyMsg').addEventListener('click', () => {
+    state.msgTemplate = box.value.trim() || DEFAULT_TEMPLATE;
+    box.value = state.msgTemplate;
+    saveTemplate(state.msgTemplate);
+    renderLeads();
+  });
+  $('resetMsg').addEventListener('click', () => {
+    box.value = DEFAULT_TEMPLATE;
+    renderMsgPreview();
+  });
 }
 
 const platformCol = () => (state.allPlatforms ? [{ label: 'Platform', render: (r) => esc(platformName(r.platform)) }] : []);
 
 function renderLeads() {
+  renderMsgPreview();
   const checkedUntil = state.config.today;
   $('leadNote').textContent = `${num(state.leads.length)} orang unik belum beli • dicek sampai ${rangeLabel(checkedUntil, checkedUntil)}` +
     (state.leadsConverted ? ` • ${num(state.leadsConverted)} orang dikeluarkan karena sudah beli` : '');
@@ -478,9 +547,10 @@ function renderLeads() {
     { label: 'Percobaan', num: true, render: (r) => num(r.attempts) },
     { label: 'Bayar via', render: (r) => esc(r.payment_method) },
     { label: 'Kontak', render: (r) => (r.phone62 ? `<a class="wa" href="${esc(waLink(r))}" target="_blank" rel="noopener">WhatsApp</a> <span class="muted">${esc(r.customer_email || '')}</span>` : esc(r.customer_email || '')) },
+    { label: 'Pesan', render: (r) => `<span title="${esc(leadMessage(r))}">${esc(leadMessage(r).slice(0, 90))}${leadMessage(r).length > 90 ? '…' : ''}</span>`, cls: 'msg' },
   ], state.leads.slice(0, 100), 'Semua checkout sudah jadi transaksi sukses 🎉');
   if (state.leads.length > 100) {
-    $('leadTable').insertAdjacentHTML('beforeend', `<tfoot><tr><td colspan="8" class="muted">Menampilkan 100 dari ${num(state.leads.length)} — export CSV untuk daftar lengkap.</td></tr></tfoot>`);
+    $('leadTable').insertAdjacentHTML('beforeend', `<tfoot><tr><td colspan="12" class="muted">Menampilkan 100 dari ${num(state.leads.length)} — export CSV untuk daftar lengkap.</td></tr></tfoot>`);
   }
 }
 
@@ -627,6 +697,7 @@ function restoreFilters() {
 async function init() {
   state.config = await fetch(apiUrl('/api/config')).then((r) => r.json());
   for (const p of state.config.platforms || []) $('platform').add(new Option(p.name, p.slug));
+  setupMsgEditor();
   $('platform').value = state.config.defaultPlatform;
   $('endDate').value = state.config.today;
   $('startDate').value = addDays(state.config.today, -29);
@@ -651,7 +722,7 @@ async function init() {
   $('prevPage').addEventListener('click', () => { state.page--; renderTrxTable(); });
   $('nextPage').addEventListener('click', () => { state.page++; renderTrxTable(); });
   $('exportTrx').addEventListener('click', () => downloadCsv('transaksi.csv', filteredTrx(), TRX_COLS));
-  $('exportLeads').addEventListener('click', () => downloadCsv('follow-up-sales.csv', state.leads, [...TRX_COLS, ['jumlah_percobaan', (r) => r.attempts], ['percobaan_pertama', (r) => r.firstDate], ['semua_produk_dicoba', (r) => r.products.join(' | ')], ['link_whatsapp', waLink]]));
+  $('exportLeads').addEventListener('click', () => downloadCsv('follow-up-sales.csv', state.leads, [...TRX_COLS, ['jumlah_percobaan', (r) => r.attempts], ['percobaan_pertama', (r) => r.firstDate], ['semua_produk_dicoba', (r) => r.products.join(' | ')], ['pesan', leadMessage], ['link_whatsapp', waLink]]));
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => state.trx.length && load());
 
   load();
