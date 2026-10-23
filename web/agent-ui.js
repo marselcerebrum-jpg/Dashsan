@@ -98,13 +98,14 @@ function renderStatus() {
   const { telegram, ai, storage, cron } = ag.info;
   const item = (label, ok, value) => `<div class="ag-item"><div class="label">${label}</div><div class="value ${ok ? 'up' : 'down'}">${ok ? '✓' : '✗'} ${value}</div></div>`;
   $('agStatus').innerHTML = [
-    item('Akun Telegram', Boolean(ag.state.tgAccount?.connected), ag.state.tgAccount?.connected ? esc(ag.state.tgAccount.user?.name || 'terhubung') : 'Belum terhubung — scan QR di bawah'),
+    item('Bot Telegram', telegram.configured && !telegram.error, telegram.username ? `@${esc(telegram.username)}` : telegram.error ? esc(telegram.error) : 'TELEGRAM_BOT_TOKEN belum diatur'),
+    item('Akun Telegram (opsional)', Boolean(ag.state.tgAccount?.connected), ag.state.tgAccount?.connected ? esc(ag.state.tgAccount.user?.name || 'terhubung') : 'Belum terhubung — scan QR di bawah'),
     item('Penulis pesan (AI)', ai.configured, ai.configured ? `Claude (${esc(ai.model)})` : 'ANTHROPIC_API_KEY belum diatur — memakai template'),
     item('Penyimpanan pengaturan', storage === 'vercel-blob' || !location.hostname.endsWith('vercel.app'), storage === 'vercel-blob' ? 'Vercel Blob' : 'File lokal (khusus komputer ini)'),
     item('Jadwal otomatis', cron.configured && ag.state.schedule.enabled, !cron.configured ? 'CRON_SECRET belum diatur' : ag.state.schedule.enabled ? `Aktif: ${ag.state.schedule.slots.map((s) => `${String(s).padStart(2, '0')}.00`).join(', ')} WIB` : 'Nonaktif'),
   ].join('');
-  $('agGuide').open = false;
-  void telegram;
+  // panduan bot dibuka selama bot sudah ada tapi belum punya grup
+  $('agGuide').open = Boolean(telegram.username) && !ag.state.groups.some((g) => g.via !== 'account');
 }
 
 function platformPicker(g) {
@@ -125,7 +126,7 @@ function renderGroups() {
         <td><input type="checkbox" data-enabled ${g.enabled ? 'checked' : ''} ${g.removed ? 'disabled' : ''} /></td>
         <td><button type="button" class="btn" data-delete>Hapus</button></td>
       </tr>`).join('')
-    : '<tr><td class="empty" colspan="5">Belum ada grup. Hubungkan akun Telegram lalu klik "Buat komunitas &amp; grup" di atas.</td></tr>';
+    : '<tr><td class="empty" colspan="5">Belum ada grup. Masukkan bot ke grup CS, kirim satu pesan di grup itu, lalu klik "Deteksi grup baru" — atau hubungkan akun Telegram dan klik "Buat komunitas &amp; grup".</td></tr>';
   $('agGroups').innerHTML = head + `<tbody>${body}</tbody>`;
 
   const usable = groups.filter((g) => !g.removed && g.platforms?.length);
