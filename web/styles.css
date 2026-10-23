@@ -232,3 +232,9 @@ td.ag-preview { white-space: pre-wrap; min-width: 280px; max-width: 520px; font-
 .ag-log { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 3px; font-size: 13px; }
 .ag-link { word-break: break-all; color: var(--s1); }
 #agentView.is-locked > :not(#agLock) { display: none !important; }
+
+.ag-sub { font-size: 14px; margin: 14px 0 6px; }
+.ag-platlinks { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; }
+.ag-plink { display: flex; justify-content: space-between; align-items: center; gap: 8px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+.ag-plink .btn { text-decoration: none; font-size: 13px; padding: 4px 10px; min-height: 0; }
+.ag-plink.done { border-color: color-mix(in srgb, var(--good) 50%, var(--border)); background: color-mix(in srgb, var(--good) 7%, var(--surface)); }

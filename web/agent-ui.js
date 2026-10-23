@@ -170,7 +170,56 @@ function renderAccount() {
   $('agScan').disabled = !(fromEnv || acc.hasApiHash);
 }
 
+// link "tambahkan bot ke grup" per platform; admin diminta supaya bot bisa memberi nama & membuat link undangan
+const startGroupUrl = (slug) => `https://t.me/${ag.info.telegram.username}?startgroup=${encodeURIComponent(slug)}&admin=change_info+invite_users+pin_messages`;
+
+function renderBotCommunity() {
+  const bot = ag.info.telegram.username;
+  const accountOn = Boolean(ag.state.tgAccount?.connected);
+  $('agCommBot').hidden = !bot;
+  $('agCommAccount').hidden = Boolean(bot) && !accountOn;
+  $('agFolderName').textContent = $('agCommTitle').value || 'Dashsan CS';
+  if (!bot) return;
+  const bySlug = new Map(ag.state.groups.filter((g) => g.communityPlatform && !g.removed).map((g) => [g.communityPlatform, g]));
+  $('agPlatLinks').innerHTML = ag.platforms.map((p) => {
+    const g = bySlug.get(p.slug);
+    return g
+      ? `<div class="ag-plink done"><span><b>${esc(p.name)}</b><br /><span class="muted">${esc(g.title)}${g.setupNote ? ` • ⚠ ${esc(g.setupNote)}` : ''}</span></span>${g.inviteLink ? `<a class="btn" href="${esc(g.inviteLink)}" target="_blank" rel="noopener">Link undangan</a>` : '<span class="up">✓</span>'}</div>`
+      : `<div class="ag-plink"><b>${esc(p.name)}</b><a class="btn primary" data-startgroup="${esc(p.slug)}" href="${esc(startGroupUrl(p.slug))}" target="_blank" rel="noopener">Buat / pilih grup</a></div>`;
+  }).join('');
+}
+
+// setelah tombol platform diklik: cek otomatis tiap 5 detik selama 3 menit
+let watchTimer = null;
+function watchForGroups(slug) {
+  clearInterval(watchTimer);
+  const until = Date.now() + 180000;
+  const name = ag.platforms.find((p) => p.slug === slug)?.name || slug;
+  $('agWatchMsg').textContent = `Menunggu grup ${name} di Telegram… (cek otomatis tiap 5 detik)`;
+  const tick = async () => {
+    try {
+      const r = await api('detect', { prefix: $('agCommPrefix').value });
+      ag.state = r.state;
+      renderGroups();
+      renderBotCommunity();
+      if (ag.state.groups.some((g) => g.communityPlatform === slug && !g.removed)) {
+        clearInterval(watchTimer);
+        $('agWatchMsg').textContent = `✓ Grup ${name} siap.`;
+        return;
+      }
+    } catch (err) {
+      $('agWatchMsg').textContent = err.message;
+    }
+    if (Date.now() > until) {
+      clearInterval(watchTimer);
+      $('agWatchMsg').textContent = `Grup ${name} belum terdeteksi. Pastikan bot sudah dimasukkan lewat tombol tadi, lalu klik "Deteksi grup baru".`;
+    }
+  };
+  watchTimer = setInterval(tick, 5000);
+}
+
 function renderCommunity() {
+  renderBotCommunity();
   const c = ag.state.community;
   const groups = ag.state.groups.filter((g) => g.via === 'account' && g.communityPlatform && !g.removed);
   const have = new Set(groups.map((g) => g.communityPlatform));
@@ -312,12 +361,18 @@ function setup() {
     });
   });
 
+  $('agPlatLinks').addEventListener('click', (e) => {
+    const slug = e.target.closest('[data-startgroup]')?.dataset.startgroup;
+    if (slug) watchForGroups(slug); // tautan tetap terbuka di tab/aplikasi Telegram
+  });
+  $('agCommTitle').addEventListener('input', () => { $('agFolderName').textContent = $('agCommTitle').value || 'Dashsan CS'; });
+
   $('agDetect').addEventListener('click', (e) => busy(e.target, 'Mencari…', async () => {
     if (ag.dirty) await save();
-    const r = await api('detect', {});
+    const r = await api('detect', { prefix: $('agCommPrefix').value });
     ag.state = r.state;
     renderAll();
-    notice(r.added ? `${r.added} grup baru ditemukan. Pilih platform & centang Aktif, lalu Simpan.` : r.seen ? 'Tidak ada grup baru (grup yang terdeteksi sudah ada di daftar).' : 'Belum ada grup terdeteksi. Pastikan bot sudah masuk grup dan ada pesan baru di grup itu dalam 24 jam terakhir.');
+    notice(r.prepared?.length ? `Grup siap otomatis: ${r.prepared.map((x) => x.title).join(', ')}.` : r.added ? `${r.added} grup baru ditemukan. Pilih platform & centang Aktif, lalu Simpan.` : r.seen ? 'Tidak ada grup baru (grup yang terdeteksi sudah ada di daftar).' : 'Belum ada grup terdeteksi. Pastikan bot sudah masuk grup dan ada pesan baru di grup itu dalam 24 jam terakhir.');
   }));
 
   $('agGroups').addEventListener('change', (e) => {

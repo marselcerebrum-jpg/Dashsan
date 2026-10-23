@@ -112,17 +112,45 @@ async function sendTelegram(chatId, text) {
   }
 }
 
-// Grup terdeteksi dari update Telegram (bot dimasukkan/dikeluarkan dari grup, atau ada pesan di grup).
+// Grup terdeteksi dari update Telegram (bot dimasukkan/dikeluarkan dari grup, pesan di grup).
 // getUpdates hanya menyimpan update ±24 jam terakhir.
-async function detectGroups(state) {
+// Link "tambahkan ke grup" dari Dashsan (t.me/<bot>?startgroup=<slug>) membuat Telegram mengirim
+// "/start@<bot> <slug>" ke grup → platform grup itu langsung diketahui dan grup disiapkan otomatis.
+async function detectGroups(state, { names = {}, prefix = 'CS' } = {}) {
   const updates = await tg('getUpdates', { allowed_updates: ['my_chat_member', 'message'], limit: 100 });
   const found = new Map();
+  const claims = new Map(); // chatId → slug
+  const migrations = [];
   for (const u of updates) {
-    const chat = u.my_chat_member?.chat || u.message?.chat;
+    const msg = u.message;
+    if (msg?.migrate_to_chat_id) migrations.push([String(msg.chat.id), String(msg.migrate_to_chat_id)]);
+    const chat = u.my_chat_member?.chat || msg?.chat;
     if (!chat || !['group', 'supergroup'].includes(chat.type)) continue;
+    const id = String(chat.id);
     const status = u.my_chat_member?.new_chat_member?.status;
-    found.set(String(chat.id), { chatId: String(chat.id), title: chat.title || String(chat.id), type: chat.type, removed: status ? ['left', 'kicked'].includes(status) : undefined });
+    const prev = found.get(id) || {};
+    found.set(id, {
+      chatId: id,
+      title: chat.title || id,
+      type: chat.type,
+      removed: status ? ['left', 'kicked'].includes(status) : prev.removed,
+      isAdmin: status ? status === 'administrator' : prev.isAdmin,
+    });
+    const m = String(msg?.text || '').match(/^\/start(?:@\w+)?\s+([a-z0-9_-]+)/i);
+    if (m && names[m[1]]) claims.set(id, m[1]);
   }
+
+  // grup biasa yang di-upgrade jadi supergroup berganti ID
+  for (const [from, to] of migrations) {
+    if (found.has(from)) {
+      found.set(to, { ...found.get(from), ...(found.get(to) || {}), chatId: to, type: 'supergroup' });
+      found.delete(from);
+    }
+    const g = state.groups.find((x) => x.chatId === from);
+    if (g && !state.groups.some((x) => x.chatId === to)) { g.chatId = to; g.type = 'supergroup'; }
+    if (claims.has(from)) { claims.set(to, claims.get(from)); claims.delete(from); }
+  }
+
   let added = 0;
   for (const g of found.values()) {
     const cur = state.groups.find((x) => x.chatId === g.chatId);
@@ -130,13 +158,45 @@ async function detectGroups(state) {
       cur.title = g.title;
       if (g.removed !== undefined) cur.removed = g.removed;
     } else if (!g.removed) {
-      state.groups.push({ ...g, platforms: [], enabled: false, removed: false, addedAt: new Date().toISOString() });
+      state.groups.push({ chatId: g.chatId, title: g.title, type: g.type, via: 'bot', platforms: [], enabled: false, removed: false, addedAt: new Date().toISOString() });
       added++;
     }
   }
+
+  // grup dari link platform: atur platform, aktifkan, rapikan nama & buat link undangan (kalau bot admin)
+  const botId = Number(TELEGRAM_TOKEN().split(':')[0]);
+  const prepared = [];
+  for (const [chatId, slug] of claims) {
+    const g = state.groups.find((x) => x.chatId === chatId);
+    if (!g || g.removed) continue;
+    g.platforms = [slug];
+    g.communityPlatform = slug;
+    g.via = 'bot';
+    g.enabled = true;
+    const notes = [];
+    let admin = found.get(chatId)?.isAdmin;
+    if (admin === undefined) {
+      try { admin = (await tg('getChatMember', { chat_id: chatId, user_id: botId })).status === 'administrator'; } catch { admin = false; }
+    }
+    if (admin) {
+      const title = `${prefix} ${names[slug]}`.trim();
+      try {
+        if (g.title !== title) { await tg('setChatTitle', { chat_id: chatId, title }); g.title = title; }
+      } catch (err) { notes.push(`nama: ${err.message}`); }
+      try { await tg('setChatDescription', { chat_id: chatId, description: `Grup CS ${names[slug]} — update & rekomendasi sales otomatis dari Dashsan.` }); } catch { /* deskripsi sama/tidak diizinkan */ }
+      if (!g.inviteLink) {
+        try { g.inviteLink = (await tg('createChatInviteLink', { chat_id: chatId, name: 'Dashsan' })).invite_link; } catch (err) { notes.push(`link: ${err.message}`); }
+      }
+    } else {
+      notes.push('bot belum admin — nama grup & link undangan tidak bisa diatur otomatis');
+    }
+    g.setupNote = notes.join('; ') || null;
+    prepared.push({ title: g.title, platform: names[slug], note: g.setupNote });
+  }
+
   // tandai update sudah dibaca supaya tidak menumpuk
   if (updates.length) await tg('getUpdates', { offset: updates[updates.length - 1].update_id + 1, limit: 1 });
-  return { added, seen: found.size };
+  return { added, seen: found.size, prepared };
 }
 
 // ---------- ringkasan data per platform ----------
@@ -569,7 +629,8 @@ export function createAgentApi(deps) {
       }
 
       if (route === 'detect') {
-        const r = await detectGroups(state);
+        const names = Object.fromEntries(deps.PLATFORMS.map((p) => [p.slug, p.name]));
+        const r = await detectGroups(state, { names, prefix: String(body.prefix ?? 'CS').trim().slice(0, 40) });
         await saveState(root, state);
         return sendJson(res, 200, { status: true, ...r, state: publicState(state) });
       }
