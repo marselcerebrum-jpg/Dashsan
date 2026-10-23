@@ -4,9 +4,15 @@
   "description": "Dashboard sales berbasis API transaksi",
   "type": "module",
   "private": true,
-  "engines": { "node": "24.x" },
+  "engines": {
+    "node": "24.x"
+  },
   "scripts": {
     "start": "node server.js",
     "demo": "DEMO=1 node server.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.1.0",
+    "@vercel/blob": "^2.8.2"
   }
 }

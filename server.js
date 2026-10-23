@@ -9,6 +9,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createAgentApi } from './agent.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -372,13 +373,19 @@ function authorized(req, res) {
   return false;
 }
 
+let agentApi;
 function handler(req, res) {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-  if (req.method !== 'GET') {
+  agentApi ??= createAgentApi({ root: __dirname, sendJson, getTransactions, PLATFORMS });
+  // cron punya pengaman sendiri (CRON_SECRET), jadi tidak memakai password dashboard
+  if (url.pathname === '/api/agent/cron') return agentApi(req, res, url);
+  const isAgent = url.pathname.startsWith('/api/agent/');
+  if (req.method !== 'GET' && !(isAgent && req.method === 'POST')) {
     res.writeHead(405);
     return res.end();
   }
   if (!authorized(req, res)) return;
+  if (isAgent) return agentApi(req, res, url);
   if (url.pathname.startsWith('/api/')) return handleApi(req, res, url);
   serveStatic(req, res, url);
 }

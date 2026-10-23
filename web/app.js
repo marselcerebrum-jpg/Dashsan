@@ -777,7 +777,20 @@ async function init() {
   $('exportLeads').addEventListener('click', () => downloadCsv('follow-up-sales.csv', state.leads, [...TRX_COLS, ['jumlah_percobaan', (r) => r.attempts], ['percobaan_pertama', (r) => r.firstDate], ['semua_produk_dicoba', (r) => r.products.join(' | ')], ['pesan', leadMessage], ['link_whatsapp', waLink]]));
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => state.trx.length && load());
 
-  load();
+  // menu: #dashboard (default) dan #agent; data dashboard baru diambil saat menu Dashboard pertama kali dibuka
+  const applyView = () => {
+    const view = location.hash === '#agent' ? 'agent' : 'dashboard';
+    document.body.dataset.view = view;
+    document.querySelectorAll('.tabs a').forEach((a) => a.classList.toggle('active', a.dataset.view === view));
+    document.title = view === 'agent' ? 'Agent Tele · Dashsan' : 'Dashboard Sales';
+    if (view === 'dashboard' && !state.loadedOnce) {
+      state.loadedOnce = true;
+      load();
+    }
+    if (view === 'agent') window.dispatchEvent(new Event('dashsan:agent'));
+  };
+  window.addEventListener('hashchange', applyView);
+  applyView();
 }
 
 init().catch((e) => showError(e.message));

@@ -54,3 +54,22 @@ API key dikirim di header `Authorization: <key>` (tanpa `Bearer`). Jika dashboar
 
 Vercel menjalankan `server.js` sebagai satu fungsi untuk semua request, sehingga halaman dan data
 sama-sama terlindungi password. Setelah mengubah Environment Variables, lakukan **Redeploy** agar berlaku.
+
+## Menu Agent Tele
+
+Mengirim insight & rekomendasi sales per platform ke grup Telegram CS, ditulis oleh Claude dari data Dashsan.
+
+- **Grup**: bot dimasukkan ke grup → "Deteksi grup baru" → pilih platform per grup (atau *Semua platform*) → Aktif → Simpan.
+- **Isi pesan**: data hari ini (00.00 WIB s/d sekarang) vs kemarin & minggu lalu di jam yang sama, rata-rata 7 hari,
+  produk/metode bayar/promo teratas, dan calon pembeli yang belum bayar. Instruksi tambahan untuk AI bisa diisi di menu.
+- **Jadwal**: tiap 3 jam (pilih jam WIB yang aktif). `vercel.json` berisi 8 cron harian (tiap jadwal sekali sehari
+  sehingga kompatibel dengan paket Hobby; waktu eksekusi Hobby bisa meleset ±1 jam).
+- **Pengaturan** disimpan di Vercel Blob privat (`agent/state.json`); lokal di `.data/`.
+
+| Env | Keterangan |
+|---|---|
+| `TELEGRAM_BOT_TOKEN` | Token bot dari @BotFather |
+| `ANTHROPIC_API_KEY` | API key Claude; tanpa ini memakai template |
+| `ANTHROPIC_MODEL` | Opsional, default `claude-opus-5-5` |
+| `BLOB_READ_WRITE_TOKEN` | Otomatis saat Blob store dihubungkan ke project |
+| `CRON_SECRET` | Pengaman endpoint `/api/agent/cron` (dikirim otomatis oleh Vercel Cron) |

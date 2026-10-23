@@ -10,10 +10,17 @@
 <body>
   <header class="topbar">
     <div class="brand">
-      <h1>Dashboard Sales</h1>
-      <span id="lastUpdated" class="muted"></span>
+      <div class="brand-row">
+        <h1>Dashsan</h1>
+        <nav class="tabs" aria-label="Menu">
+          <a href="#dashboard" data-view="dashboard">Dashboard</a>
+          <a href="#agent" data-view="agent">Agent Tele</a>
+        </nav>
+      </div>
+      <span id="lastUpdated" class="muted view-dashboard"></span>
+      <span class="muted view-agent">Kirim insight &amp; rekomendasi sales per platform ke grup Telegram CS</span>
     </div>
-    <form id="filters" class="filters">
+    <form id="filters" class="filters view-dashboard">
       <label>Platform
         <select id="platform"><option value="all">Semua platform</option></select>
       </label>
@@ -41,12 +48,12 @@
     </form>
   </header>
 
-  <div id="demoBanner" class="banner" hidden>
+  <div id="demoBanner" class="banner view-dashboard" hidden>
     Mode demo: data di bawah adalah <b>data contoh</b>. Isi <code>API_BASE_URL</code> di file <code>.env</code> untuk memakai data asli.
   </div>
-  <div id="errorBanner" class="banner error" hidden></div>
+  <div id="errorBanner" class="banner error view-dashboard" hidden></div>
 
-  <main id="main">
+  <main id="main" class="view-dashboard">
     <section class="kpis" id="kpis"></section>
 
     <section class="card" style="--card-c: var(--s7)">
@@ -148,8 +155,74 @@
     </section>
   </main>
 
+  <main id="agentView" class="view-agent">
+    <div id="agError" class="banner error" hidden></div>
+    <div id="agNotice" class="banner" hidden></div>
+
+    <section class="card" style="--card-c: var(--s3)">
+      <div class="card-head"><h2>Status Agent</h2><button id="agRefresh" type="button" class="btn">Muat ulang</button></div>
+      <div id="agStatus" class="ag-status"></div>
+      <details id="agGuide" class="ag-guide">
+        <summary>Panduan menghubungkan bot Telegram</summary>
+        <ol>
+          <li>Buka Telegram, cari <b>@BotFather</b>, kirim <code>/newbot</code>, beri nama (mis. <i>Dashsan Sales Bot</i>) dan username yang berakhiran <code>bot</code>.</li>
+          <li>BotFather memberi <b>token</b> (format <code>123456:ABC...</code>). Simpan di Vercel → project <b>dashsan</b> → Settings → Environment Variables dengan nama <code>TELEGRAM_BOT_TOKEN</code>, lalu Redeploy.</li>
+          <li>Masukkan bot ke tiap grup CS (Tambah anggota → cari username bot). Agar bisa mengirim pesan, bot cukup jadi anggota biasa.</li>
+          <li>Setelah bot masuk, kirim satu pesan apa saja di grup tersebut, lalu klik <b>Deteksi grup baru</b> di bawah (dalam 24 jam).</li>
+          <li>Pilih platform untuk tiap grup, centang <b>Aktif</b>, klik <b>Simpan pengaturan</b>. Coba dulu lewat <b>Pratinjau &amp; Kirim Manual</b> sebelum menyalakan jadwal.</li>
+        </ol>
+      </details>
+    </section>
+
+    <section class="card" style="--card-c: var(--s1)">
+      <div class="card-head">
+        <h2>Grup Telegram</h2>
+        <div class="actions">
+          <button id="agDetect" type="button" class="btn">Deteksi grup baru</button>
+          <button id="agSave" type="button" class="btn primary">Simpan pengaturan</button>
+        </div>
+      </div>
+      <p class="muted ag-hint">Tiap grup menerima insight untuk platform yang dipilih. Pilih <b>Semua platform</b> untuk grup manajemen (ringkasan gabungan).</p>
+      <div class="table-wrap"><table id="agGroups"></table></div>
+    </section>
+
+    <div class="grid-2">
+      <section class="card" style="--card-c: var(--s7)">
+        <div class="card-head"><h2>Jadwal Otomatis</h2></div>
+        <label class="ag-switch"><input type="checkbox" id="agSchedOn" /> Kirim otomatis ke semua grup aktif</label>
+        <div class="ag-slots" id="agSlots"></div>
+        <p class="muted ag-hint">Jam dalam WIB. Di paket gratis Vercel, jadwal bisa terlambat sampai ±1 jam dari jam yang dipilih.</p>
+      </section>
+      <section class="card" style="--card-c: var(--s2)">
+        <div class="card-head"><h2>Instruksi untuk AI</h2></div>
+        <textarea id="agInstr" class="ag-textarea" rows="5" placeholder="Opsional. Mis.: Sapa dengan &quot;Halo tim CS!&quot;. Fokus ke follow-up customer pending. Sebut target harian JadiASN Rp5 jt."></textarea>
+        <p class="muted ag-hint">Berlaku untuk semua pesan (jadwal &amp; manual). Klik Simpan pengaturan setelah mengubah.</p>
+      </section>
+    </div>
+
+    <section class="card" style="--card-c: var(--s5)">
+      <div class="card-head"><h2>Pratinjau &amp; Kirim Manual</h2></div>
+      <div class="ag-row">
+        <label>Grup <select id="agPreviewGroup"></select></label>
+        <button id="agPreviewBtn" type="button" class="btn">Buat pratinjau</button>
+        <span id="agPreviewInfo" class="muted"></span>
+      </div>
+      <textarea id="agPreviewText" class="ag-textarea" rows="12" placeholder="Pratinjau pesan muncul di sini. Boleh diedit sebelum dikirim."></textarea>
+      <div class="ag-row">
+        <button id="agSendBtn" type="button" class="btn primary" disabled>Kirim ke grup ini</button>
+        <button id="agRunAll" type="button" class="btn">Kirim ke semua grup aktif sekarang</button>
+      </div>
+    </section>
+
+    <section class="card" style="--card-c: var(--s8)">
+      <div class="card-head"><h2>Riwayat Pengiriman</h2></div>
+      <div class="table-wrap scroll"><table id="agHistory"></table></div>
+    </section>
+  </main>
+
   <div id="loading" class="loading" hidden><div class="spinner"></div><span>Mengambil data…</span></div>
 
   <script src="app.js" type="module"></script>
+  <script src="agent-ui.js" type="module"></script>
 </body>
 </html>
