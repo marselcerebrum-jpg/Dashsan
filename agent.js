@@ -9,6 +9,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import Anthropic from '@anthropic-ai/sdk';
 import { get as blobGet, put as blobPut } from '@vercel/blob';
+import * as account from './tg-account.js';
 
 const TELEGRAM_TOKEN = () => process.env.TELEGRAM_BOT_TOKEN || '';
 const CLAUDE_MODEL = () => process.env.ANTHROPIC_MODEL || 'claude-opus-5-5';
@@ -17,7 +18,11 @@ const SLOTS = [0, 3, 6, 9, 12, 15, 18, 21]; // jam WIB
 const HISTORY_MAX = 150;
 
 const DEFAULT_STATE = {
-  groups: [], // { chatId, title, type, platforms: [slug | 'all'], enabled, addedAt, removed }
+  // { chatId, title, type, platforms: [slug | 'all'], enabled, addedAt, removed,
+  //   via: 'bot' | 'account', channelId, accessHash, inviteLink, communityPlatform }
+  groups: [],
+  tgAccount: null, // { apiId, apiHashEnc, sessionEnc, user, connectedAt } — rahasia terenkripsi
+  community: null, // { title, filterId, inviteUrl, groupCount }
   schedule: { enabled: false, slots: [...SLOTS] },
   instructions: '',
   history: [], // { at, chatId, title, trigger, ok, error, preview }
@@ -299,6 +304,30 @@ async function writeMessage(group, facts, instructions) {
   return { text, writer: response.model };
 }
 
+// ---------- pengiriman (akun Telegram atau bot) ----------
+async function deliver(root, state, items) {
+  // items: [{ group, text }] → [{ group, ok, error }]
+  const viaAccount = items.filter((x) => x.group.via === 'account');
+  const viaBot = items.filter((x) => x.group.via !== 'account');
+  const out = [];
+  if (viaAccount.length) {
+    try {
+      out.push(...(await account.sendViaAccount(root, state, viaAccount.map((x) => ({ group: x.group, html: telegramHtml(x.text) })))));
+    } catch (err) {
+      out.push(...viaAccount.map((x) => ({ group: x.group, ok: false, error: err.message })));
+    }
+  }
+  for (const x of viaBot) {
+    try {
+      await sendTelegram(x.group.chatId, x.text);
+      out.push({ group: x.group, ok: true });
+    } catch (err) {
+      out.push({ group: x.group, ok: false, error: err.message });
+    }
+  }
+  return out;
+}
+
 // ---------- menjalankan ----------
 function pushHistory(state, entry) {
   state.history.unshift({ at: new Date().toISOString(), ...entry });
@@ -306,24 +335,25 @@ function pushHistory(state, entry) {
 }
 
 async function runGroups(deps, state, groups, trigger) {
-  const results = [];
-  // maksimal 3 grup paralel
+  // 1) tulis pesan (maks 3 paralel), 2) kirim semuanya
+  const written = [];
+  const failed = [];
   for (let i = 0; i < groups.length; i += 3) {
     const batch = await Promise.allSettled(groups.slice(i, i + 3).map(async (g) => {
       const facts = await buildFacts(deps, g.platforms);
-      const { text, writer } = await writeMessage(g, facts, state.instructions);
-      await sendTelegram(g.chatId, text);
-      return { g, text, writer };
+      return { group: g, ...(await writeMessage(g, facts, state.instructions)) };
     }));
-    batch.forEach((r, j) => {
-      const g = groups[i + j];
-      const entry = r.status === 'fulfilled'
-        ? { chatId: g.chatId, title: g.title, trigger, ok: true, writer: r.value.writer, preview: r.value.text.slice(0, 600) }
-        : { chatId: g.chatId, title: g.title, trigger, ok: false, error: r.reason?.message || String(r.reason) };
-      pushHistory(state, entry);
-      results.push(entry);
-    });
+    batch.forEach((r, j) => (r.status === 'fulfilled' ? written.push(r.value) : failed.push({ group: groups[i + j], ok: false, error: r.reason?.message || String(r.reason) })));
   }
+  const sent = await deliver(deps.root, state, written);
+  const results = [...sent, ...failed].map((r) => {
+    const w = written.find((x) => x.group === r.group);
+    const entry = r.ok
+      ? { chatId: r.group.chatId, title: r.group.title, trigger, ok: true, writer: w?.writer, preview: w.text.slice(0, 600) }
+      : { chatId: r.group.chatId, title: r.group.title, trigger, ok: false, error: r.error };
+    pushHistory(state, entry);
+    return entry;
+  });
   return results;
 }
 
@@ -358,6 +388,35 @@ export function cronAuthorized(req) {
   return safeEqual(req.headers.authorization || '', `Bearer ${secret}`);
 }
 
+// Password khusus menu Agent Tele (env AGENT_PASSWORD). Setelah benar, browser memegang token 12 jam.
+const TOKEN_TTL = 12 * 3600 * 1000;
+const sign = (exp) => crypto.createHmac('sha256', `agent|${process.env.AGENT_PASSWORD}`).update(String(exp)).digest('hex');
+function agentAuthorized(req) {
+  if (!process.env.AGENT_PASSWORD) return !process.env.VERCEL; // lokal tanpa password boleh
+  const [exp, sig] = String(req.headers['x-agent-token'] || '').split('.');
+  return Number(exp) > Date.now() && sig && safeEqual(sig, sign(exp));
+}
+let failedUnlocks = 0;
+
+// Bagian state yang dikirim ke browser — tanpa sesi & API hash
+function publicState(state) {
+  const acc = state.tgAccount;
+  return {
+    ...state,
+    tgAccount: acc ? { apiId: acc.apiId || null, hasApiHash: Boolean(acc.apiHashEnc), connected: Boolean(acc.sessionEnc), user: acc.user || null, connectedAt: acc.connectedAt || null, revokedAt: acc.revokedAt || null } : null,
+    groups: state.groups.map(({ accessHash, ...g }) => g),
+  };
+}
+
+// Server-Sent Events untuk proses panjang (login QR, membuat komunitas)
+function sseStream(res) {
+  res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' });
+  return {
+    send: (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`),
+    end: () => res.end(),
+  };
+}
+
 export function createAgentApi(deps) {
   const { root, sendJson } = deps;
 
@@ -371,6 +430,8 @@ export function createAgentApi(deps) {
       telegram: { configured: Boolean(TELEGRAM_TOKEN()), username: bot?.username || null, error: botError },
       ai: { configured: Boolean(process.env.ANTHROPIC_API_KEY), model: CLAUDE_MODEL() },
       storage: useBlob() ? 'vercel-blob' : 'file-lokal',
+      account: { apiFromEnv: Boolean(process.env.TELEGRAM_API_ID && process.env.TELEGRAM_API_HASH), keyConfigured: Boolean(process.env.TG_SESSION_KEY) || !process.env.VERCEL },
+      locked: Boolean(process.env.AGENT_PASSWORD),
       cron: { configured: Boolean(process.env.CRON_SECRET), slots: SLOTS },
     };
   }
@@ -402,16 +463,92 @@ export function createAgentApi(deps) {
         return sendJson(res, 200, { status: true, slot, results });
       }
 
+      if (req.method === 'GET' && route === 'lock') {
+        return sendJson(res, 200, { status: true, required: Boolean(process.env.AGENT_PASSWORD) || Boolean(process.env.VERCEL), configured: Boolean(process.env.AGENT_PASSWORD), unlocked: agentAuthorized(req) });
+      }
+      // header khusus: mencegah form lintas situs memakai password yang tersimpan di browser (CSRF)
+      if (req.method === 'POST' && req.headers['x-dashsan'] !== '1') return sendJson(res, 403, { status: false, message: 'Header X-Dashsan wajib' });
+
+      if (req.method === 'POST' && route === 'unlock') {
+        if (!process.env.AGENT_PASSWORD) throw Object.assign(new Error('AGENT_PASSWORD belum diatur di server'), { code: 503 });
+        const body = await readJson(req);
+        if (!safeEqual(String(body.password || ''), process.env.AGENT_PASSWORD)) {
+          failedUnlocks++;
+          await new Promise((r) => setTimeout(r, Math.min(5000, 800 * failedUnlocks))); // perlambat tebak-tebakan
+          return sendJson(res, 401, { status: false, message: 'Password Agent Tele salah' });
+        }
+        failedUnlocks = 0;
+        const exp = Date.now() + TOKEN_TTL;
+        return sendJson(res, 200, { status: true, token: `${exp}.${sign(exp)}`, exp });
+      }
+      if (!agentAuthorized(req)) return sendJson(res, 401, { status: false, locked: true, message: 'Menu Agent Tele terkunci. Masukkan password Agent Tele.' });
+
       if (req.method === 'GET' && route === 'state') {
         const [state, st] = await Promise.all([loadState(root), status()]);
-        return sendJson(res, 200, { status: true, state, info: st, platforms: deps.PLATFORMS });
+        return sendJson(res, 200, { status: true, state: publicState(state), info: st, platforms: deps.PLATFORMS });
       }
 
       if (req.method !== 'POST') return sendJson(res, 405, { status: false, message: 'Method tidak diizinkan' });
-      // header khusus: mencegah form lintas situs memakai password yang tersimpan di browser (CSRF)
-      if (req.headers['x-dashsan'] !== '1') return sendJson(res, 403, { status: false, message: 'Header X-Dashsan wajib' });
       const body = await readJson(req);
       const state = await loadState(root);
+
+      if (route === 'tg/creds') {
+        if (body.clear === true) {
+          if (state.tgAccount?.sessionEnc) throw Object.assign(new Error('Putuskan akun Telegram dulu sebelum menghapus API'), { code: 400 });
+          state.tgAccount = { ...(state.tgAccount || {}), apiId: null, apiHashEnc: null };
+          await saveState(root, state);
+          return sendJson(res, 200, { status: true, state: publicState(state) });
+        }
+        const apiId = Number(body.apiId);
+        const apiHash = String(body.apiHash || '').trim();
+        if (!Number.isInteger(apiId) || apiId <= 0 || !/^[a-f0-9]{32}$/i.test(apiHash)) throw Object.assign(new Error('API ID harus angka dan API Hash 32 karakter (dari my.telegram.org)'), { code: 400 });
+        state.tgAccount = { ...(state.tgAccount || {}), apiId, apiHashEnc: account.encrypt(root, apiHash) };
+        await saveState(root, state);
+        return sendJson(res, 200, { status: true, state: publicState(state) });
+      }
+
+      if (route === 'tg/login') {
+        const stream = sseStream(res);
+        try {
+          const user = await account.qrLogin(root, state, { password: String(body.password || ''), emit: stream.send });
+          await saveState(root, state);
+          stream.send({ type: 'done', user });
+        } catch (err) {
+          stream.send({ type: 'error', message: err.errorMessage || err.message });
+        }
+        return stream.end();
+      }
+
+      if (route === 'tg/logout') {
+        await account.logout(root, state);
+        await saveState(root, state);
+        return sendJson(res, 200, { status: true, state: publicState(state) });
+      }
+
+      if (route === 'community') {
+        const valid = new Set(deps.PLATFORMS.map((p) => p.slug));
+        const platforms = (Array.isArray(body.platforms) ? body.platforms : []).filter((x) => valid.has(x));
+        const title = String(body.title || '').trim().slice(0, 64) || 'Dashsan CS';
+        const prefix = String(body.prefix ?? 'CS').trim().slice(0, 40);
+        if (!platforms.length) throw Object.assign(new Error('Pilih minimal satu platform'), { code: 400 });
+        const names = Object.fromEntries(deps.PLATFORMS.map((p) => [p.slug, p.name]));
+        const stream = sseStream(res);
+        try {
+          const community = await account.createCommunity(root, state, {
+            title, prefix, platforms, names,
+            emit: async (ev) => {
+              if (ev.save) await saveState(root, state); // simpan tiap grup jadi supaya bisa dilanjutkan
+              stream.send(ev);
+            },
+          });
+          await saveState(root, state);
+          stream.send({ type: 'done', community, state: publicState(state) });
+        } catch (err) {
+          await saveState(root, state).catch(() => {});
+          stream.send({ type: 'error', message: err.errorMessage || err.message, state: publicState(state) });
+        }
+        return stream.end();
+      }
 
       if (route === 'settings') {
         const valid = new Set(['all', ...deps.PLATFORMS.map((p) => p.slug)]);
@@ -428,13 +565,13 @@ export function createAgentApi(deps) {
         }
         if (typeof body.instructions === 'string') state.instructions = body.instructions.slice(0, 2000);
         await saveState(root, state);
-        return sendJson(res, 200, { status: true, state });
+        return sendJson(res, 200, { status: true, state: publicState(state) });
       }
 
       if (route === 'detect') {
         const r = await detectGroups(state);
         await saveState(root, state);
-        return sendJson(res, 200, { status: true, ...r, state });
+        return sendJson(res, 200, { status: true, ...r, state: publicState(state) });
       }
 
       if (route === 'preview') {
@@ -448,16 +585,15 @@ export function createAgentApi(deps) {
         const g = findGroup(state, body.chatId);
         const text = String(body.text || '').trim();
         if (!text) throw Object.assign(new Error('Pesan kosong'), { code: 400 });
-        try {
-          await sendTelegram(g.chatId, text);
-          pushHistory(state, { chatId: g.chatId, title: g.title, trigger: 'manual', ok: true, preview: text.slice(0, 600) });
-        } catch (err) {
-          pushHistory(state, { chatId: g.chatId, title: g.title, trigger: 'manual', ok: false, error: err.message });
+        const [r] = await deliver(root, state, [{ group: g, text }]);
+        if (r.ok) pushHistory(state, { chatId: g.chatId, title: g.title, trigger: 'manual', ok: true, preview: text.slice(0, 600) });
+        else {
+          pushHistory(state, { chatId: g.chatId, title: g.title, trigger: 'manual', ok: false, error: r.error });
           await saveState(root, state);
-          throw err;
+          throw Object.assign(new Error(r.error), { code: 502 });
         }
         await saveState(root, state);
-        return sendJson(res, 200, { status: true, state });
+        return sendJson(res, 200, { status: true, state: publicState(state) });
       }
 
       if (route === 'run-now') {
@@ -465,7 +601,7 @@ export function createAgentApi(deps) {
         if (!groups.length) throw Object.assign(new Error('Belum ada grup aktif yang punya platform'), { code: 400 });
         const results = await runGroups(deps, state, groups, 'manual (semua grup)');
         await saveState(root, state);
-        return sendJson(res, 200, { status: true, results, state });
+        return sendJson(res, 200, { status: true, results, state: publicState(state) });
       }
 
       return sendJson(res, 404, { status: false, message: 'Not found' });

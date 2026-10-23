@@ -5,14 +5,67 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const SLOTS = [0, 3, 6, 9, 12, 15, 18, 21];
 const ag = { state: null, info: null, platforms: [], loaded: false, dirty: false };
 
+// token buka-kunci menu disimpan per tab (hilang saat tab ditutup)
+const getToken = () => { try { return sessionStorage.getItem('dashsan.agentToken') || ''; } catch { return ''; } };
+const setToken = (t) => { try { t ? sessionStorage.setItem('dashsan.agentToken', t) : sessionStorage.removeItem('dashsan.agentToken'); } catch { /* abaikan */ } };
+
+function request(route, body) {
+  const headers = { 'X-Agent-Token': getToken() };
+  const opts = { headers };
+  if (body !== undefined) {
+    Object.assign(headers, { 'Content-Type': 'application/json', 'X-Dashsan': '1' });
+    Object.assign(opts, { method: 'POST', body: JSON.stringify(body) });
+  }
+  return fetch(new URL(`/api/agent/${route}`, location.origin), opts);
+}
+
 async function api(route, body) {
-  const opts = body === undefined
-    ? {}
-    : { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Dashsan': '1' }, body: JSON.stringify(body) };
-  const res = await fetch(new URL(`/api/agent/${route}`, location.origin), opts);
+  const res = await request(route, body);
   const data = await res.json().catch(() => ({}));
+  if (data.locked) { showLock(); throw new Error(data.message); }
   if (!res.ok || !data.status) throw new Error(data.message || `Gagal (HTTP ${res.status})`);
   return data;
+}
+
+// proses panjang (scan QR, buat komunitas) dikirim server bertahap sebagai event
+async function stream(route, body, onEvent) {
+  const res = await request(route, body);
+  if (!res.ok || !res.headers.get('content-type')?.includes('event-stream')) {
+    const data = await res.json().catch(() => ({}));
+    if (data.locked) showLock();
+    throw new Error(data.message || `Gagal (HTTP ${res.status})`);
+  }
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  let last = null;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let i;
+    while ((i = buf.indexOf('\n\n')) >= 0) {
+      const line = buf.slice(0, i).replace(/^data: /, '');
+      buf = buf.slice(i + 2);
+      if (!line.trim()) continue;
+      last = JSON.parse(line);
+      onEvent(last);
+    }
+  }
+  if (last?.type === 'error') throw new Error(last.message);
+  return last;
+}
+
+function showLock(msg = '') {
+  $('agentView').classList.add('is-locked');
+  $('agLock').hidden = false;
+  $('agUnlockMsg').textContent = msg;
+  ag.loaded = false;
+  setTimeout(() => $('agUnlockPw').focus(), 0);
+}
+function hideLock() {
+  $('agentView').classList.remove('is-locked');
+  $('agLock').hidden = true;
 }
 
 function notice(msg, isError = false) {
@@ -45,12 +98,13 @@ function renderStatus() {
   const { telegram, ai, storage, cron } = ag.info;
   const item = (label, ok, value) => `<div class="ag-item"><div class="label">${label}</div><div class="value ${ok ? 'up' : 'down'}">${ok ? '✓' : '✗'} ${value}</div></div>`;
   $('agStatus').innerHTML = [
-    item('Bot Telegram', telegram.configured && !telegram.error, telegram.username ? `@${esc(telegram.username)}` : telegram.error ? esc(telegram.error) : 'TELEGRAM_BOT_TOKEN belum diatur'),
+    item('Akun Telegram', Boolean(ag.state.tgAccount?.connected), ag.state.tgAccount?.connected ? esc(ag.state.tgAccount.user?.name || 'terhubung') : 'Belum terhubung — scan QR di bawah'),
     item('Penulis pesan (AI)', ai.configured, ai.configured ? `Claude (${esc(ai.model)})` : 'ANTHROPIC_API_KEY belum diatur — memakai template'),
     item('Penyimpanan pengaturan', storage === 'vercel-blob' || !location.hostname.endsWith('vercel.app'), storage === 'vercel-blob' ? 'Vercel Blob' : 'File lokal (khusus komputer ini)'),
     item('Jadwal otomatis', cron.configured && ag.state.schedule.enabled, !cron.configured ? 'CRON_SECRET belum diatur' : ag.state.schedule.enabled ? `Aktif: ${ag.state.schedule.slots.map((s) => `${String(s).padStart(2, '0')}.00`).join(', ')} WIB` : 'Nonaktif'),
   ].join('');
-  $('agGuide').open = !telegram.username;
+  $('agGuide').open = false;
+  void telegram;
 }
 
 function platformPicker(g) {
@@ -62,15 +116,16 @@ function platformPicker(g) {
 
 function renderGroups() {
   const groups = ag.state.groups;
-  const head = '<thead><tr><th>Grup</th><th>Platform yang dikirim</th><th>Aktif</th><th></th></tr></thead>';
+  const head = '<thead><tr><th>Grup</th><th>Dikirim lewat</th><th>Platform yang dikirim</th><th>Aktif</th><th></th></tr></thead>';
   const body = groups.length
     ? groups.map((g) => `<tr data-chat="${esc(g.chatId)}">
         <td><b>${esc(g.title)}</b><br /><span class="muted">${esc(g.chatId)}${g.removed ? ' • <span class="down">bot sudah dikeluarkan</span>' : ''}</span></td>
+        <td>${g.via === 'account' ? 'Akun Telegram' : 'Bot'}${g.inviteLink ? `<br /><a class="ag-link" href="${esc(g.inviteLink)}" target="_blank" rel="noopener">Link undangan</a>` : ''}</td>
         <td>${platformPicker(g)}</td>
         <td><input type="checkbox" data-enabled ${g.enabled ? 'checked' : ''} ${g.removed ? 'disabled' : ''} /></td>
         <td><button type="button" class="btn" data-delete>Hapus</button></td>
       </tr>`).join('')
-    : '<tr><td class="empty" colspan="4">Belum ada grup. Masukkan bot ke grup Telegram, kirim satu pesan di grup itu, lalu klik "Deteksi grup baru".</td></tr>';
+    : '<tr><td class="empty" colspan="5">Belum ada grup. Hubungkan akun Telegram lalu klik "Buat komunitas &amp; grup" di atas.</td></tr>';
   $('agGroups').innerHTML = head + `<tbody>${body}</tbody>`;
 
   const usable = groups.filter((g) => !g.removed && g.platforms?.length);
@@ -98,8 +153,48 @@ function renderHistory() {
       : '<tr><td class="empty" colspan="5">Belum ada pesan terkirim.</td></tr>') + '</tbody>';
 }
 
+function renderAccount() {
+  const acc = ag.state.tgAccount || {};
+  const fromEnv = ag.info.account?.apiFromEnv;
+  $('agAccConnected').hidden = !acc.connected;
+  $('agAccSetup').hidden = Boolean(acc.connected);
+  $('agAccState').innerHTML = acc.connected ? '<span class="up">✓ Terhubung</span>' : acc.revokedAt ? '<span class="down">Terputus</span>' : 'Belum terhubung';
+  if (acc.user) {
+    $('agAccName').textContent = acc.user.name || acc.user.id;
+    $('agAccMeta').textContent = [acc.user.username && `@${acc.user.username}`, acc.user.phone, acc.connectedAt && `sejak ${fmtTime(acc.connectedAt)}`].filter(Boolean).join(' • ');
+  }
+  $('agCredsRow').hidden = fromEnv;
+  if (!$('agApiId').value && acc.apiId) $('agApiId').value = acc.apiId;
+  $('agCredsState').textContent = fromEnv ? '' : acc.hasApiHash ? '✓ API tersimpan (terenkripsi)' : '';
+  $('agScan').disabled = !(fromEnv || acc.hasApiHash);
+}
+
+function renderCommunity() {
+  const c = ag.state.community;
+  const groups = ag.state.groups.filter((g) => g.via === 'account' && g.communityPlatform && !g.removed);
+  const have = new Set(groups.map((g) => g.communityPlatform));
+  $('agCommInfo').innerHTML = c?.inviteUrl || groups.length
+    ? `<p><b>${esc(c?.title || 'Komunitas')}</b> — ${groups.length} grup.${c?.inviteUrl ? ` Link gabung ke semua grup sekaligus: <a class="ag-link" href="${esc(c.inviteUrl)}" target="_blank" rel="noopener">${esc(c.inviteUrl)}</a>` : ''}</p>`
+    : '';
+  if (c?.title) $('agCommTitle').value = c.title;
+  const box = $('agCommPlatforms');
+  if (!box.dataset.ready) {
+    box.innerHTML = ag.platforms.map((p) => `<label><input type="checkbox" data-cp="${esc(p.slug)}" checked /> ${esc(p.name)}</label>`).join('');
+    box.dataset.ready = '1';
+  }
+  box.querySelectorAll('[data-cp]').forEach((cb) => {
+    const done = have.has(cb.dataset.cp);
+    cb.closest('label').title = done ? 'Grup sudah ada' : '';
+    cb.closest('label').style.opacity = done ? 0.55 : 1;
+  });
+  $('agCommCreate').disabled = !ag.state.tgAccount?.connected;
+  $('agCommCreate').textContent = groups.length ? 'Lengkapi grup & perbarui link komunitas' : 'Buat komunitas & grup';
+}
+
 function renderAll() {
   renderStatus();
+  renderAccount();
+  renderCommunity();
   renderGroups();
   renderSchedule();
   renderHistory();
@@ -143,6 +238,79 @@ async function refresh() {
 function setup() {
   $('agRefresh').addEventListener('click', (e) => busy(e.target, 'Memuat…', async () => { await refresh(); notice(''); }));
   $('agSave').addEventListener('click', (e) => busy(e.target, 'Menyimpan…', save));
+  $('agUnlockForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const res = await request('unlock', { password: $('agUnlockPw').value });
+    const data = await res.json().catch(() => ({}));
+    if (!data.status) return showLock(data.message || 'Gagal membuka');
+    setToken(data.token);
+    $('agUnlockPw').value = '';
+    hideLock();
+    show();
+  });
+  $('agLockBtn').addEventListener('click', () => { setToken(''); showLock(); });
+
+  $('agCredsSave').addEventListener('click', (e) => busy(e.target, 'Menyimpan…', async () => {
+    const r = await api('tg/creds', { apiId: $('agApiId').value.trim(), apiHash: $('agApiHash').value.trim() });
+    ag.state = r.state;
+    $('agApiHash').value = '';
+    renderAll();
+    notice('API Telegram tersimpan (terenkripsi). Lanjut klik Scan QR.');
+  }));
+  $('agScan').addEventListener('click', (e) => busy(e.target, 'Menunggu scan…', async () => {
+    $('agQr').hidden = false;
+    $('agQrImg').innerHTML = '';
+    $('agQrMsg').textContent = 'Menyiapkan QR…';
+    try {
+      const last = await stream('tg/login', { password: $('agTwoFa').value }, (ev) => {
+        if (ev.type === 'qr') {
+          $('agQrImg').innerHTML = ev.svg;
+          $('agQrMsg').textContent = 'Scan dengan HP akun khusus: Telegram → Settings → Devices → Link Desktop Device. QR diperbarui otomatis.';
+        }
+      });
+      $('agTwoFa').value = '';
+      $('agQr').hidden = true;
+      await refresh();
+      notice(`Akun Telegram terhubung: ${last.user?.name || ''}. Lanjut buat komunitas di bawah.`);
+    } catch (err) {
+      $('agQrImg').innerHTML = '';
+      $('agQrMsg').textContent = '';
+      $('agQr').hidden = true;
+      throw err;
+    }
+  }));
+  $('agAccLogout').addEventListener('click', (e) => {
+    if (!confirm('Putuskan akun Telegram dari Dashsan? Pengiriman lewat akun akan berhenti sampai di-scan ulang.')) return;
+    busy(e.target, 'Memutus…', async () => {
+      const r = await api('tg/logout', {});
+      ag.state = r.state;
+      renderAll();
+      notice('Akun Telegram diputus.');
+    });
+  });
+  $('agCommCreate').addEventListener('click', (e) => {
+    const platforms = [...$('agCommPlatforms').querySelectorAll('[data-cp]:checked')].map((c) => c.dataset.cp);
+    if (!platforms.length) return notice('Pilih minimal satu platform.', true);
+    if (!confirm(`Buat komunitas "${$('agCommTitle').value}" dengan grup untuk ${platforms.length} platform di akun Telegram yang terhubung?`)) return;
+    const log = $('agCommLog');
+    log.hidden = false;
+    log.innerHTML = '';
+    const line = (txt) => log.insertAdjacentHTML('beforeend', `<li>${txt}</li>`);
+    busy(e.target, 'Membuat grup…', async () => {
+      try {
+        const last = await stream('community', { title: $('agCommTitle').value, prefix: $('agCommPrefix').value, platforms }, (ev) => {
+          if (ev.type === 'progress') line(`<b>${esc(ev.title)}</b> — ${esc(ev.status)}${ev.inviteLink ? ` • <a class="ag-link" href="${esc(ev.inviteLink)}" target="_blank" rel="noopener">link</a>` : ''}`);
+        });
+        ag.state = last.state;
+        renderAll();
+        notice('Komunitas siap. Bagikan link komunitas atau link per grup ke tim CS.');
+      } catch (err) {
+        await refresh().catch(() => {});
+        throw err;
+      }
+    });
+  });
+
   $('agDetect').addEventListener('click', (e) => busy(e.target, 'Mencari…', async () => {
     if (ag.dirty) await save();
     const r = await api('detect', {});
@@ -217,10 +385,14 @@ async function show() {
   if (ag.loaded) return;
   ag.loaded = true;
   try {
+    const lock = await (await request('lock')).json();
+    if (lock.required && !lock.configured) { ag.loaded = false; return showLock('Password Agent Tele belum diatur di server (AGENT_PASSWORD).'); }
+    if (lock.required && !lock.unlocked) return showLock();
+    hideLock();
     await refresh();
   } catch (err) {
     ag.loaded = false;
-    notice(err.message, true);
+    if (!$('agentView').classList.contains('is-locked')) notice(err.message, true);
   }
 }
 

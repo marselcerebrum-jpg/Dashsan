@@ -156,14 +156,24 @@
   </main>
 
   <main id="agentView" class="view-agent">
+    <section class="card ag-lock" id="agLock" hidden style="--card-c: var(--s8)">
+      <div class="card-head"><h2>Menu Agent Tele terkunci</h2></div>
+      <p class="muted ag-hint">Menu ini bisa mengirim pesan atas nama akun Telegram tim, jadi memakai password tersendiri (berbeda dengan password dashboard).</p>
+      <form id="agUnlockForm" class="ag-row">
+        <label>Password Agent Tele <input id="agUnlockPw" type="password" autocomplete="current-password" required /></label>
+        <button type="submit" class="btn primary">Buka</button>
+        <span id="agUnlockMsg" class="down"></span>
+      </form>
+    </section>
+
     <div id="agError" class="banner error" hidden></div>
     <div id="agNotice" class="banner" hidden></div>
 
     <section class="card" style="--card-c: var(--s3)">
-      <div class="card-head"><h2>Status Agent</h2><button id="agRefresh" type="button" class="btn">Muat ulang</button></div>
+      <div class="card-head"><h2>Status Agent</h2><div class="actions"><button id="agRefresh" type="button" class="btn">Muat ulang</button><button id="agLockBtn" type="button" class="btn">Kunci menu</button></div></div>
       <div id="agStatus" class="ag-status"></div>
       <details id="agGuide" class="ag-guide">
-        <summary>Panduan menghubungkan bot Telegram</summary>
+        <summary>Alternatif: memakai bot Telegram (opsional)</summary>
         <ol>
           <li>Buka Telegram, cari <b>@BotFather</b>, kirim <code>/newbot</code>, beri nama (mis. <i>Dashsan Sales Bot</i>) dan username yang berakhiran <code>bot</code>.</li>
           <li>BotFather memberi <b>token</b> (format <code>123456:ABC...</code>). Simpan di Vercel → project <b>dashsan</b> → Settings → Environment Variables dengan nama <code>TELEGRAM_BOT_TOKEN</code>, lalu Redeploy.</li>
@@ -172,6 +182,48 @@
           <li>Pilih platform untuk tiap grup, centang <b>Aktif</b>, klik <b>Simpan pengaturan</b>. Coba dulu lewat <b>Pratinjau &amp; Kirim Manual</b> sebelum menyalakan jadwal.</li>
         </ol>
       </details>
+    </section>
+
+    <section class="card ag-unlocked" style="--card-c: var(--s6)">
+      <div class="card-head"><h2>Akun Telegram</h2><span id="agAccState" class="muted"></span></div>
+      <div id="agAccConnected" hidden>
+        <p>Terhubung sebagai <b id="agAccName"></b> <span id="agAccMeta" class="muted"></span></p>
+        <p class="muted ag-hint">Untuk memutus dari sisi Telegram: Settings → Devices → sesi <i>Dashsan</i>. Atau klik tombol di bawah.</p>
+        <button id="agAccLogout" type="button" class="btn">Putuskan akun</button>
+      </div>
+      <div id="agAccSetup">
+        <ol class="ag-steps">
+          <li>Login ke <a href="https://my.telegram.org" target="_blank" rel="noopener">my.telegram.org</a> memakai <b>nomor akun khusus</b> → <i>API development tools</i> → buat aplikasi (nama bebas, mis. <i>Dashsan</i>). Salin <b>api_id</b> dan <b>api_hash</b>.</li>
+          <li>Isi di bawah, klik <b>Simpan API</b>, lalu <b>Scan QR</b>.</li>
+          <li>Di HP akun khusus: Telegram → Settings → Devices → <b>Link Desktop Device</b> → arahkan kamera ke QR.</li>
+        </ol>
+        <div class="ag-row" id="agCredsRow">
+          <label>API ID <input id="agApiId" inputmode="numeric" autocomplete="off" /></label>
+          <label>API Hash <input id="agApiHash" type="password" autocomplete="off" size="34" /></label>
+          <button id="agCredsSave" type="button" class="btn">Simpan API</button>
+          <span id="agCredsState" class="muted"></span>
+        </div>
+        <div class="ag-row">
+          <label>Password verifikasi 2 langkah <span class="muted">(isi hanya jika akun memakainya)</span><input id="agTwoFa" type="password" autocomplete="off" /></label>
+          <button id="agScan" type="button" class="btn primary">Scan QR</button>
+        </div>
+        <div id="agQr" class="ag-qr" hidden><div id="agQrImg"></div><p class="muted" id="agQrMsg">Menunggu scan… QR diperbarui otomatis.</p></div>
+      </div>
+    </section>
+
+    <section class="card ag-unlocked" style="--card-c: var(--s4)">
+      <div class="card-head"><h2>Komunitas</h2><span class="muted">1 grup per platform + 1 link untuk bergabung ke semuanya</span></div>
+      <div id="agCommInfo"></div>
+      <div class="ag-row">
+        <label>Nama komunitas (folder) <input id="agCommTitle" value="Dashsan CS" maxlength="64" /></label>
+        <label>Awalan nama grup <input id="agCommPrefix" value="CS" maxlength="40" /></label>
+      </div>
+      <div class="ag-slots" id="agCommPlatforms"></div>
+      <div class="ag-row">
+        <button id="agCommCreate" type="button" class="btn primary">Buat komunitas &amp; grup</button>
+        <span class="muted">Grup dibuat satu per satu dengan jeda ±8 detik agar aman dari batasan Telegram. Grup yang sudah ada tidak dibuat ulang.</span>
+      </div>
+      <ul id="agCommLog" class="ag-log" hidden></ul>
     </section>
 
     <section class="card" style="--card-c: var(--s1)">

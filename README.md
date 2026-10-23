@@ -73,3 +73,12 @@ Mengirim insight & rekomendasi sales per platform ke grup Telegram CS, ditulis o
 | `ANTHROPIC_MODEL` | Opsional, default `claude-opus-5-5` |
 | `BLOB_READ_WRITE_TOKEN` | Otomatis saat Blob store dihubungkan ke project |
 | `CRON_SECRET` | Pengaman endpoint `/api/agent/cron` (dikirim otomatis oleh Vercel Cron) |
+
+### Akun Telegram (scan QR) & komunitas
+
+- Agent Tele dikunci password terpisah (`AGENT_PASSWORD`); token buka-kunci berlaku 12 jam per tab.
+- Akun Telegram **khusus** dihubungkan lewat scan QR (Settings → Devices → Link Desktop Device). Butuh `api_id` &
+  `api_hash` dari my.telegram.org (diisi di menu, disimpan terenkripsi) atau env `TELEGRAM_API_ID` / `TELEGRAM_API_HASH`.
+- Sesi login disimpan terenkripsi AES-256-GCM dengan `TG_SESSION_KEY` (jangan diganti — sesi tersimpan jadi tidak terbaca).
+- "Buat komunitas & grup": satu supergroup per platform (jeda ±8 detik antar grup) + folder bersama dengan satu link
+  undangan (`t.me/addlist/...`). Grup buatan akun dikirimi pesan lewat akun; grup bot tetap lewat bot.

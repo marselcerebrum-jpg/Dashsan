@@ -223,3 +223,12 @@ body[data-view="agent"] .view-dashboard, body:not([data-view="agent"]) .view-age
 .ag-plat-list { display: none; position: absolute; z-index: 4; margin-top: 4px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; gap: 4px; box-shadow: 0 4px 16px rgba(0,0,0,.15); min-width: 220px; }
 .ag-plat-list label { display: flex; gap: 6px; align-items: center; white-space: nowrap; }
 td.ag-preview { white-space: pre-wrap; min-width: 280px; max-width: 520px; font-size: 12px; color: var(--muted); }
+
+.ag-steps { margin: 0 0 12px; padding-left: 20px; display: grid; gap: 4px; }
+.ag-steps a { color: var(--s1); }
+.ag-qr { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+.ag-qr #agQrImg { background: #fff; padding: 10px; border-radius: 10px; line-height: 0; }
+.ag-qr #agQrImg svg { width: 220px; height: 220px; }
+.ag-log { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 3px; font-size: 13px; }
+.ag-link { word-break: break-all; color: var(--s1); }
+#agentView.is-locked > :not(#agLock) { display: none !important; }
