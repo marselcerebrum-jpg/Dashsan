@@ -114,7 +114,7 @@ async function sendTelegram(chatId, text) {
 
 // Siapkan grup bot untuk satu platform: tandai platform, aktifkan, lalu (bila bot admin) beri deskripsi,
 // link undangan, dan — untuk grup dari tombol platform — nama standar "<awalan> <Platform>".
-async function prepareBotGroup(g, slug, { names, prefix = 'CS', rename = false, isAdmin } = {}) {
+async function prepareBotGroup(g, slug, { names, prefix = '', rename = false, isAdmin } = {}) {
   g.platforms = [slug];
   g.communityPlatform = slug;
   g.via = 'bot';
@@ -143,7 +143,7 @@ async function prepareBotGroup(g, slug, { names, prefix = 'CS', rename = false, 
 // getUpdates hanya menyimpan update ±24 jam terakhir.
 // Link "tambahkan ke grup" dari Dashsan (t.me/<bot>?startgroup=<slug>) membuat Telegram mengirim
 // "/start@<bot> <slug>" ke grup → platform grup itu langsung diketahui dan grup disiapkan otomatis.
-async function detectGroups(state, { names = {}, prefix = 'CS' } = {}) {
+async function detectGroups(state, { names = {}, prefix = '' } = {}) {
   const updates = await tg('getUpdates', { allowed_updates: ['my_chat_member', 'message'], limit: 100 });
   const found = new Map();
   const claims = new Map(); // chatId → slug
@@ -685,7 +685,7 @@ export function createAgentApi(deps) {
         const valid = new Set(deps.PLATFORMS.map((p) => p.slug));
         const platforms = (Array.isArray(body.platforms) ? body.platforms : []).filter((x) => valid.has(x));
         const title = String(body.title || '').trim().slice(0, 64) || 'Dashsan CS';
-        const prefix = String(body.prefix ?? 'CS').trim().slice(0, 40);
+        const prefix = String(body.prefix ?? '').trim().slice(0, 40);
         if (!platforms.length) throw Object.assign(new Error('Pilih minimal satu platform'), { code: 400 });
         const names = Object.fromEntries(deps.PLATFORMS.map((p) => [p.slug, p.name]));
         const stream = sseStream(res);
@@ -709,6 +709,8 @@ export function createAgentApi(deps) {
       if (route === 'settings') {
         const valid = new Set(['all', ...deps.PLATFORMS.map((p) => p.slug)]);
         const toPrepare = [];
+        const renames = [];
+        const renameErrors = [];
         for (const upd of Array.isArray(body.groups) ? body.groups : []) {
           const g = state.groups.find((x) => x.chatId === String(upd.chatId));
           if (!g) continue;
@@ -719,6 +721,7 @@ export function createAgentApi(deps) {
             if (!one && g.via !== 'account') g.communityPlatform = null;
           }
           if (typeof upd.enabled === 'boolean') g.enabled = upd.enabled;
+          if (typeof upd.title === 'string' && upd.title.trim() && upd.title.trim() !== g.title) renames.push([g, upd.title.trim().slice(0, 128)]);
           if (upd.delete === true) state.groups = state.groups.filter((x) => x !== g);
         }
         if (body.schedule) {
@@ -732,13 +735,23 @@ export function createAgentApi(deps) {
           await prepareBotGroup(g, slug, { names, rename: false });
           g.enabled = wasEnabled; // pilihan Aktif dari form tetap dihormati
         }
+        // ganti nama grup di Telegram (bot harus admin dengan izin ubah info)
+        for (const [g, title] of renames) {
+          try {
+            if (g.via === 'account') await account.withAccount(root, state, (c) => c.invoke(new (account.Api.channels.EditTitle)({ channel: account.inputPeer(g), title })));
+            else await tg('setChatTitle', { chat_id: g.chatId, title });
+            g.title = title;
+          } catch (err) {
+            renameErrors.push(`${g.title}: ${err.message}`);
+          }
+        }
         await saveState(root, state);
-        return sendJson(res, 200, { status: true, state: publicState(state) });
+        return sendJson(res, 200, { status: true, state: publicState(state), renameErrors });
       }
 
       if (route === 'detect') {
         const names = Object.fromEntries(deps.PLATFORMS.map((p) => [p.slug, p.name]));
-        const r = await detectGroups(state, { names, prefix: String(body.prefix ?? 'CS').trim().slice(0, 40) });
+        const r = await detectGroups(state, { names, prefix: String(body.prefix ?? '').trim().slice(0, 40) });
         await saveState(root, state);
         return sendJson(res, 200, { status: true, ...r, state: publicState(state) });
       }

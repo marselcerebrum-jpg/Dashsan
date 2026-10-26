@@ -238,3 +238,5 @@ td.ag-preview { white-space: pre-wrap; min-width: 280px; max-width: 520px; font-
 .ag-plink { display: flex; justify-content: space-between; align-items: center; gap: 8px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
 .ag-plink .btn { text-decoration: none; font-size: 13px; padding: 4px 10px; min-height: 0; }
 .ag-plink.done { border-color: color-mix(in srgb, var(--good) 50%, var(--border)); background: color-mix(in srgb, var(--good) 7%, var(--surface)); }
+
+.ag-title { font-weight: 600; min-width: 180px; }

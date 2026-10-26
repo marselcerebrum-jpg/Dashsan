@@ -8,6 +8,7 @@ import crypto from 'node:crypto';
 import bigInt from 'big-integer';
 import QRCode from 'qrcode';
 import { TelegramClient, Api } from 'telegram';
+export { Api };
 import { StringSession } from 'telegram/sessions/index.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -154,7 +155,7 @@ export async function logout(root, state) {
 }
 
 // ---------- komunitas: grup per platform + folder bersama ----------
-const inputPeer = (g) => new Api.InputPeerChannel({ channelId: bigInt(g.channelId), accessHash: bigInt(g.accessHash) });
+export const inputPeer = (g) => new Api.InputPeerChannel({ channelId: bigInt(g.channelId), accessHash: bigInt(g.accessHash) });
 
 export async function createCommunity(root, state, { title, prefix, platforms, names, emit }) {
   return withAccount(root, state, async (client) => {

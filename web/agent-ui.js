@@ -120,7 +120,7 @@ function renderGroups() {
   const head = '<thead><tr><th>Grup</th><th>Dikirim lewat</th><th>Platform yang dikirim</th><th>Aktif</th><th></th></tr></thead>';
   const body = groups.length
     ? groups.map((g) => `<tr data-chat="${esc(g.chatId)}">
-        <td><b>${esc(g.title)}</b><br /><span class="muted">${esc(g.chatId)}${g.removed ? ' • <span class="down">bot sudah dikeluarkan</span>' : ''}</span></td>
+        <td><input class="ag-title" data-title value="${esc(g.title)}" maxlength="128" ${g.removed ? 'disabled' : ''} /><br /><span class="muted">${esc(g.chatId)}${g.removed ? ' • <span class="down">bot sudah dikeluarkan</span>' : ''}</span></td>
         <td>${g.via === 'account' ? 'Akun Telegram' : 'Bot'}${g.inviteLink ? `<br /><a class="ag-link" href="${esc(g.inviteLink)}" target="_blank" rel="noopener">Link undangan</a>` : ''}</td>
         <td>${platformPicker(g)}</td>
         <td><input type="checkbox" data-enabled ${g.enabled ? 'checked' : ''} ${g.removed ? 'disabled' : ''} /></td>
@@ -257,6 +257,7 @@ function collectSettings() {
     chatId: tr.dataset.chat,
     platforms: [...tr.querySelectorAll('[data-plat]:checked')].map((c) => c.dataset.plat),
     enabled: tr.querySelector('[data-enabled]').checked,
+    title: tr.querySelector('[data-title]').value.trim(),
   }));
   return {
     groups,
@@ -273,7 +274,7 @@ async function save() {
   const r = await api('settings', s);
   ag.state = r.state;
   renderAll();
-  notice('Pengaturan tersimpan.');
+  notice(r.renameErrors?.length ? `Tersimpan, tapi sebagian nama grup gagal diganti: ${r.renameErrors.join('; ')}` : 'Pengaturan tersimpan.', Boolean(r.renameErrors?.length));
 }
 
 async function refresh() {
@@ -375,6 +376,7 @@ function setup() {
     notice(r.prepared?.length ? `Grup siap otomatis: ${r.prepared.map((x) => x.title).join(', ')}.` : r.added ? `${r.added} grup baru ditemukan. Pilih platform & centang Aktif, lalu Simpan.` : r.seen ? 'Tidak ada grup baru (grup yang terdeteksi sudah ada di daftar).' : 'Belum ada grup terdeteksi. Pastikan bot sudah masuk grup dan ada pesan baru di grup itu dalam 24 jam terakhir.');
   }));
 
+  $('agGroups').addEventListener('input', (e) => { if (e.target.matches('[data-title]')) ag.dirty = true; });
   $('agGroups').addEventListener('change', (e) => {
     ag.dirty = true;
     const tr = e.target.closest('tr[data-chat]');

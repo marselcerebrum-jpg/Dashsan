@@ -217,14 +217,14 @@
       <div id="agCommInfo"></div>
       <div class="ag-row">
         <label>Nama komunitas (folder) <input id="agCommTitle" value="Dashsan CS" maxlength="64" /></label>
-        <label>Awalan nama grup <input id="agCommPrefix" value="CS" maxlength="40" /></label>
+        <label>Awalan nama grup <span class="muted">(opsional)</span> <input id="agCommPrefix" value="" maxlength="40" placeholder="kosong = nama platform saja" /></label>
       </div>
 
       <div id="agCommBot" hidden>
         <h3 class="ag-sub">Lewat bot — 1 klik per platform</h3>
         <ol class="ag-steps">
           <li>Klik tombol platform di bawah (paling mudah dari HP yang login <b>akun khusus</b>). Telegram terbuka dan meminta memilih grup: pilih <b>buat grup baru</b> atau grup yang sudah ada, lalu setujui bot sebagai <b>admin</b>.</li>
-          <li>Kembali ke halaman ini — Dashsan mendeteksi otomatis, memberi nama grup (mis. <i>CS JadiASN</i>), membuat link undangan, dan mengaktifkan grup.</li>
+          <li>Kembali ke halaman ini — Dashsan mendeteksi otomatis, memberi nama grup sesuai platform (mis. <i>JadiASN</i>), membuat link undangan, dan mengaktifkan grup.</li>
           <li>Setelah semua grup jadi, satukan jadi komunitas: Telegram → Settings → <b>Chat Folders</b> → Create Folder (nama: <i id="agFolderName">Dashsan CS</i>) → Add Chats → pilih semua grup CS → simpan → <b>Share Folder</b> → salin link. (Bagian ini wajib manual: bot tidak bisa membuat folder.)</li>
         </ol>
         <div class="ag-platlinks" id="agPlatLinks"></div>
