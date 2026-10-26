@@ -296,6 +296,12 @@ async function buildFacts(deps, platforms) {
       minggu_lalu_hari_sama_jam_sama: summarize(d(lastWeek).filter(upToNow)),
       kemarin_full: summarize(d(yesterday)),
       rata2_harian_7_hari: (() => { const s = summarize(last7); return { checkout: Math.round(s.checkout / 7), sukses: Math.round(s.sukses / 7), omzet: Math.round(s.omzet / 7) }; })(),
+      rata2_7_hari_jam_sama: (() => { const s = summarize(last7.filter(upToNow)); return { checkout: Math.round(s.checkout / 7), sukses: Math.round(s.sukses / 7), omzet: Math.round(s.omzet / 7) }; })(),
+      jam_ramai_7_hari: (() => {
+        const c = new Map();
+        for (const t of last7) if (Number(t.status) === 1) { const h = Number(closingTime(t).slice(0, 2)); c.set(h, (c.get(h) || 0) + 1); }
+        return [...c].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([h]) => h).sort((a, b) => a - b);
+      })(),
       produk_teratas_hari_ini: topBy(t0, (t) => t.product),
       metode_bayar_hari_ini: topBy(t0, (t) => t.payment_method, 5),
       promo_teratas_hari_ini: topBy(t0, (t) => promoCode(t.promo_code)),
@@ -315,9 +321,16 @@ async function buildFacts(deps, platforms) {
 const SYSTEM_PROMPT = `Anda adalah analis sales untuk bisnis bimbel online (persiapan CPNS, BUMN, Polri/TNI, kedinasan, TOEFL, dll.). Tugas Anda menulis pesan update berkala untuk grup Telegram tim Customer Service (CS) agar mereka sadar kondisi penjualan per platform dan tahu apa yang harus dikerjakan sekarang.
 
 Aturan:
-- Bahasa Indonesia yang santai tapi profesional, langsung ke inti. Maksimal ±200 kata.
+- Bahasa Indonesia yang santai tapi profesional, langsung ke inti. Maksimal ±120 kata.
+- Dibaca di HP (aplikasi Telegram): tiap baris pendek (±40 karakter), TIDAK ada paragraf panjang. Pecah detail ke baris berikutnya yang diawali 3 spasi. Beri satu baris kosong antar bagian. Singkat nama produk yang panjang (mis. "Program Super Intensif SKD CPNS 2026 - Masa Aktif 1 Tahun" → "Paket 1 Tahun").
 - Pakai HANYA angka dari data JSON yang diberikan. Jangan mengarang angka, nama, atau penyebab yang tidak didukung data; bila menduga penyebab, sebut sebagai dugaan.
-- Struktur: 1 baris judul (platform + jam), ringkasan angka utama hari ini vs kemarin di jam yang sama, lalu 2-4 rekomendasi aksi konkret untuk CS (misal follow-up calon pembeli yang belum bayar, bantu customer dengan metode bayar yang sering gagal, dorong produk/promo yang sedang laku).
+- Struktur (ikuti urutan ini, boleh lewati bagian yang datanya kosong):
+  1. Judul: "📊 Update Sales <platform> — <hari, tanggal> • <jam> WIB".
+  2. Sebelum jam 09.00: satu baris rekap kemarin penuh (omzet, trx sukses).
+  3. "Hari ini s/d <jam>": omzet (▲/▼ % vs kemarin jam sama dan vs minggu lalu hari sama), trx sukses dari checkout + conversion, pace vs rata-rata 7 hari di jam yang sama, jumlah gagal/expired/pending.
+  4. "Prioritas CS sekarang" (bernomor, 2-4 butir, paling penting dulu): follow-up calon pembeli belum bayar (sebut jumlah, berapa masih pending, potensi omzet, arahkan ke Daftar Follow-up Dashsan); metode bayar dengan banyak gagal hari ini → arahkan ke metode yang lancar; siaga di jam ramai berikutnya; dorong produk/promo yang sedang laku.
+  5. "Yang laku hari ini": produk teratas & promo terpopuler.
+  Untuk grup beberapa platform: ringkasan total, lalu satu baris per platform (urut omzet) dengan ▲/▼ vs kemarin, dan sorot platform yang turun paling dalam.
 - Format Telegram: gunakan hanya tag <b> dan <i> untuk penekanan, "•" untuk butir. Jangan pakai Markdown (**, #), tabel, atau tag lain.
 - Format rupiah seperti Rp1,2 jt atau Rp185 rb. Persentase satu desimal.
 - Jika hari ini masih sepi karena masih pagi/dini hari, katakan dengan wajar; jangan panik.
@@ -330,16 +343,94 @@ const rupiah = (n) => {
   return `Rp${Math.round(n)}`;
 };
 
-// Tanpa ANTHROPIC_API_KEY: pesan dari template (tetap berguna untuk uji coba pengiriman)
+// Tanpa ANTHROPIC_API_KEY: pesan dari template. Struktur yang sama dipakai sebagai pedoman untuk Claude.
+const HARI = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+const BULAN = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+const fmtPct = (x) => `${Math.abs(x).toLocaleString('id-ID', { maximumFractionDigits: Math.abs(x) >= 10 ? 0 : 1 })}%`;
+function change(cur, old) {
+  if (!old) return cur ? 'baru' : null;
+  const ch = ((cur - old) / old) * 100;
+  return `${ch >= 0 ? '▲' : '▼'}${fmtPct(ch)}`;
+}
+const esc = (x) => String(x ?? ''); // escape HTML dilakukan sekali saat kirim (telegramHtml)
+const jam = (h) => `${String(h).padStart(2, '0')}.00`;
+// "Program Super Intensif SKD CPNS 2026 - Masa Aktif 1 Tahun (Khusus Perpanjang)" → "Paket 1 Tahun (Perpanjang)"
+function shortProduct(name) {
+  let n = String(name || '');
+  if (n.includes(' - ')) n = n.slice(n.lastIndexOf(' - ') + 3);
+  // HURUF BESAR SEMUA → Judul (singkatan seperti SKD, CPNS, TNI tetap kapital)
+  if (n === n.toUpperCase()) n = n.toLowerCase().replace(/\p{L}+/gu, (w) => (/^(skd|skb|cpns|pppk|bumn|tni|tka|tpa|ojk|utbk|snbt|toefl|asn|polri)$/.test(w) ? w.toUpperCase() : w[0].toUpperCase() + w.slice(1)));
+  n = n.replace(/^(Program|Paket|Bimbel)\s+/i, '').replace(/^Masa Aktif\s*/i, 'Paket ').replace(/\(Khusus Perpanjang\)/i, '(Perpanjang)').trim();
+  return n.length > 30 ? `${n.slice(0, 29).trim()}…` : n;
+}
+
+const SUB = '\n    ';
+function priorities(p, nowHour) {
+  const out = [];
+  const l = p.calon_pembeli_belum_bayar_hari_ini;
+  if (l.jumlah_orang) out.push(`Follow-up <b>${l.jumlah_orang} calon pembeli</b>${SUB}${[l.masih_pending && `${l.masih_pending} masih pending 🔥`, `potensi ${rupiah(l.potensi_omzet)}`].filter(Boolean).join(' • ')}${SUB}→ Dashsan › Daftar Follow-up`);
+  const good = p.metode_bayar_hari_ini.filter((m) => m.checkout >= 3).sort((a, b) => b.conversion_pct - a.conversion_pct)[0];
+  const bad = p.metode_bayar_hari_ini.filter((m) => m.checkout >= 3 && m.conversion_pct < 50).sort((a, b) => a.conversion_pct - b.conversion_pct)[0];
+  if (bad && good && good.nama !== bad.nama) out.push(`<b>${esc(bad.nama)}</b> sering gagal (${bad.sukses}/${bad.checkout} sukses)${SUB}→ arahkan ke ${esc(good.nama)} (${fmtPct(good.conversion_pct)} sukses)`);
+  const next = p.jam_ramai_7_hari.filter((h) => h > nowHour);
+  if (next.length) out.push(`Siaga jam ramai: <b>${next.map(jam).join(', ')}</b>${SUB}balas chat customer secepatnya`);
+  const top = p.produk_teratas_hari_ini[0];
+  const promo = p.promo_teratas_hari_ini.find((x) => x.sukses);
+  if (top?.sukses) out.push(`Dorong <b>${esc(shortProduct(top.nama))}</b>${promo ? `${SUB}+ promo ${esc(promo.nama)}` : ''}`);
+  return out.slice(0, 4);
+}
+
+function platformBlock(p, nowHour, cutoff) {
+  const h = p.hari_ini;
+  const cmp = [change(h.omzet, p.kemarin_jam_sama.omzet) && `${change(h.omzet, p.kemarin_jam_sama.omzet)} vs kemarin`, change(h.omzet, p.minggu_lalu_hari_sama_jam_sama.omzet) && `${change(h.omzet, p.minggu_lalu_hari_sama_jam_sama.omzet)} vs mg lalu`].filter(Boolean);
+  const pace = p.rata2_7_hari_jam_sama.omzet ? Math.round((h.omzet / p.rata2_7_hari_jam_sama.omzet) * 100) : null;
+  const lines = [];
+  if (nowHour < 9) lines.push('🗓 <b>Rekap kemarin</b>', `${rupiah(p.kemarin_full.omzet)} • ${p.kemarin_full.sukses} trx sukses`, '');
+  lines.push(`<b>Hari ini s/d ${cutoff}</b>`);
+  lines.push(`💰 <b>${rupiah(h.omzet)}</b>`);
+  if (cmp.length) lines.push(`    ${cmp.join(' • ')}`);
+  lines.push(`✅ ${h.sukses} sukses / ${h.checkout} checkout${h.conversion_pct != null ? ` (${fmtPct(h.conversion_pct)})` : ''}`);
+  if (pace != null) lines.push(`🎯 Pace ${pace}% dari rata-rata${pace >= 100 ? ' 🔥' : ''}`);
+  if (h.gagal || h.expired || h.pending) lines.push(`⚠️ ${h.gagal} gagal • ${h.expired} expired • ${h.pending} pending`);
+  const pr = priorities(p, nowHour);
+  if (pr.length) lines.push('', '<b>Prioritas CS sekarang</b>', ...pr.map((x, i) => `${i + 1}. ${x}`));
+  const laku = p.produk_teratas_hari_ini.filter((x) => x.sukses).slice(0, 3).map((x) => `🏆 ${esc(shortProduct(x.nama))}${SUB}${x.sukses} trx • ${rupiah(x.omzet)}`);
+  if (laku.length) lines.push('', '<b>Paling laku hari ini</b>', ...laku);
+  return lines;
+}
+
 function templateMessage(group, facts) {
-  const lines = [`<b>Update Sales ${facts.waktu}</b>`, `<i>${group.title}</i>`, ''];
-  for (const p of facts.per_platform) {
-    const h = p.hari_ini, k = p.kemarin_jam_sama;
-    const ch = k.omzet ? Math.round(((h.omzet - k.omzet) / k.omzet) * 100) : null;
-    lines.push(`<b>${p.platform}</b>: ${rupiah(h.omzet)} dari ${h.sukses} trx sukses (conv ${h.conversion_pct ?? 0}%)` + (ch === null ? '' : ` • ${ch >= 0 ? '▲' : '▼'}${Math.abs(ch)}% vs kemarin jam sama`));
-    const l = p.calon_pembeli_belum_bayar_hari_ini;
-    if (l.jumlah_orang) lines.push(`• ${l.jumlah_orang} calon pembeli belum bayar (${l.masih_pending} pending), potensi ${rupiah(l.potensi_omzet)} — cek Daftar Follow-up di Dashsan`);
+  const now = new Date(Date.parse(facts.waktu.replace(' ', 'T').replace(' WIB', ':00Z')));
+  const cutoff = facts.waktu.slice(11, 16).replace(':', '.');
+  const nowHour = Number(facts.waktu.slice(11, 13));
+  const tanggal = `${HARI[now.getUTCDay()]}, ${now.getUTCDate()} ${BULAN[now.getUTCMonth()]}`;
+  const ps = facts.per_platform;
+  if (ps.length === 1) {
+    return [`📊 <b>Update Sales ${esc(ps[0].platform)}</b>`, `${tanggal} • ${cutoff} WIB`, '', ...platformBlock(ps[0], nowHour, cutoff)].join('\n');
   }
+  // banyak platform: ringkasan total + satu baris per platform
+  const t = facts.total.hari_ini;
+  const lines = ['📊 <b>Update Sales Semua Platform</b>', `${tanggal} • ${cutoff} WIB`, ''];
+  lines.push(`<b>Total s/d ${cutoff}</b>`);
+  lines.push(`💰 <b>${rupiah(t.omzet)}</b>${change(t.omzet, facts.total.kemarin_jam_sama.omzet) ? ` (${change(t.omzet, facts.total.kemarin_jam_sama.omzet)} vs kemarin)` : ''}`);
+  lines.push(`✅ ${t.sukses} sukses • conv ${fmtPct(t.conversion_pct ?? 0)}`, '');
+  lines.push('<b>Per platform</b>');
+  const sorted = [...ps].sort((a, b) => b.hari_ini.omzet - a.hari_ini.omzet);
+  const idle = sorted.filter((p) => !p.hari_ini.omzet);
+  for (const p of sorted.filter((x) => x.hari_ini.omzet)) lines.push(`• <b>${esc(p.platform)}</b> ${rupiah(p.hari_ini.omzet)}${change(p.hari_ini.omzet, p.kemarin_jam_sama.omzet) ? ` ${change(p.hari_ini.omzet, p.kemarin_jam_sama.omzet)}` : ''}`);
+  if (idle.length) {
+    const names = idle.map((p) => esc(p.platform));
+    const rows = [];
+    for (let i = 0; i < names.length; i += 3) rows.push(names.slice(i, i + 3).join(', '));
+    lines.push(`• Belum ada penjualan:${SUB}${rows.join(SUB)}`);
+  }
+  const drops = nowHour < 10 ? [] : ps.filter((p) => p.kemarin_jam_sama.omzet >= 500000).map((p) => ({ p, ch: (p.hari_ini.omzet - p.kemarin_jam_sama.omzet) / p.kemarin_jam_sama.omzet })).sort((a, b) => a.ch - b.ch);
+  const leads = ps.reduce((a, p) => a + p.calon_pembeli_belum_bayar_hari_ini.jumlah_orang, 0);
+  const pot = ps.reduce((a, p) => a + p.calon_pembeli_belum_bayar_hari_ini.potensi_omzet, 0);
+  const pr = [];
+  if (drops[0] && drops[0].ch < -0.2) pr.push(`Cek <b>${esc(drops[0].p.platform)}</b>${SUB}turun ${fmtPct(drops[0].ch * 100)} vs kemarin jam sama`);
+  if (leads) pr.push(`Follow-up <b>${leads} calon pembeli</b>${SUB}potensi ${rupiah(pot)}${SUB}→ Dashsan › Daftar Follow-up`);
+  if (pr.length) lines.push('', '<b>Prioritas</b>', ...pr.map((x, i) => `${i + 1}. ${x}`));
   return lines.join('\n');
 }
 
