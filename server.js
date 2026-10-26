@@ -23,7 +23,7 @@ const API_KEY = process.env.API_KEY || '';
 const PLATFORMS = (process.env.PLATFORMS ||
   'jadiasn:JadiASN,jadibumn:JadiBUMN,cerebrum:Cerebrum,jadipolisi:JadiPolisi,jadiprajurit:JadiPrajurit,' +
   'jadisekdin:JadiSekdin,jadiojk:JadiOJK,jadipppk:JadiPPPK,jadibeasiswa:JadiBeasiswa,jadipcpm:JadiPCPM,' +
-  'jagotpa:JagoTPA,psikoteskerja:Psikotes Kerja,toeflacademy:TOEFL Academy')
+  'jagotpa:JagoTPA,psikoteskerja:Psikotes Kerja,toeflacademy:TOEFL Academy,jadippg:JadiPPG')
   .split(',')
   .map((x) => x.trim())
   .filter(Boolean)

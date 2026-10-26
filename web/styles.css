@@ -246,3 +246,14 @@ td.ag-preview { white-space: pre-wrap; min-width: 280px; max-width: 520px; font-
 .ag-mode:has(input:checked) { border-color: var(--s3); background: color-mix(in srgb, var(--s3) 8%, var(--surface)); }
 .ag-mode input { margin-top: 3px; }
 .ag-bubble { white-space: pre-wrap; max-width: 380px; padding: 10px 12px; border-radius: 12px 12px 12px 4px; background: color-mix(in srgb, var(--s1) 10%, var(--surface)); border: 1px solid var(--border); font-size: 14px; line-height: 1.45; }
+
+.ag-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; border-bottom: 1px solid var(--border); }
+.ag-tab { font: inherit; font-weight: 600; cursor: pointer; border: 1px solid transparent; border-bottom: none; background: none; color: var(--muted); padding: 8px 14px; border-radius: 8px 8px 0 0; margin-bottom: -1px; }
+.ag-tab:hover { color: var(--text); }
+.ag-tab.active { color: var(--text); background: var(--surface); border-color: var(--border); border-bottom: 2px solid var(--surface); box-shadow: inset 0 3px 0 var(--s3); }
+.ag-tab[data-kind="all"].active { box-shadow: inset 0 3px 0 var(--s7); }
+.ag-targets { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; margin-bottom: 8px; }
+.ag-targets label { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--muted); }
+.ag-targets input { text-align: right; font-variant-numeric: tabular-nums; }
+.ag-plink.all { grid-column: 1 / -1; border-color: color-mix(in srgb, var(--s7) 55%, var(--border)); background: color-mix(in srgb, var(--s7) 7%, var(--surface)); }
+.ag-badge { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 999px; background: color-mix(in srgb, var(--s7) 18%, transparent); color: var(--s7); margin-left: 6px; vertical-align: middle; }

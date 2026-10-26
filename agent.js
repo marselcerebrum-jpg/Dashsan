@@ -10,6 +10,7 @@ import crypto from 'node:crypto';
 import Anthropic from '@anthropic-ai/sdk';
 import { get as blobGet, put as blobPut } from '@vercel/blob';
 import * as account from './tg-account.js';
+import * as allIns from './all-insight.js';
 
 const TELEGRAM_TOKEN = () => process.env.TELEGRAM_BOT_TOKEN || '';
 const CLAUDE_MODEL = () => process.env.ANTHROPIC_MODEL || 'claude-opus-5-5';
@@ -25,7 +26,10 @@ const DEFAULT_STATE = {
   community: null, // { title, filterId, inviteUrl, groupCount }
   schedule: { enabled: false, slots: [...SLOTS] },
   instructions: '',
-  messageTemplate: { mode: 'auto', text: '' }, // mode 'auto' (template bervariasi / Claude) atau 'custom'
+  messageTemplate: { mode: 'auto', text: '' }, // grup per platform: 'auto' (template bervariasi / Claude) atau 'custom'
+  messageTemplateAll: { mode: 'auto', text: '' }, // grup All (gabungan): template terpisah
+  targets: {}, // target omzet bulanan per platform; kosong = DEFAULT_TARGETS
+  monthAgg: {}, // total per bulan per platform yang sudah dihitung ("slug|YYYY-MM")
   history: [], // { at, chatId, title, trigger, ok, error, preview }
   lastSlot: '',
 };
@@ -118,6 +122,7 @@ async function sendTelegram(chatId, text) {
 async function prepareBotGroup(g, slug, { names, prefix = '', rename = false, isAdmin } = {}) {
   g.platforms = [slug];
   g.communityPlatform = slug;
+  const isAll = slug === 'all';
   g.via = 'bot';
   g.enabled = true;
   const notes = [];
@@ -130,7 +135,8 @@ async function prepareBotGroup(g, slug, { names, prefix = '', rename = false, is
     if (rename && g.title !== title) {
       try { await tg('setChatTitle', { chat_id: g.chatId, title }); g.title = title; } catch (err) { notes.push(`nama: ${err.message}`); }
     }
-    try { await tg('setChatDescription', { chat_id: g.chatId, description: `Grup CS ${names[slug]} — update & rekomendasi sales otomatis dari Dashsan.` }); } catch { /* deskripsi sama/tidak diizinkan */ }
+    const desc = isAll ? 'Insight gabungan semua platform — update sales & target bulanan otomatis dari Dashsan.' : `Grup CS ${names[slug]} — update & rekomendasi sales otomatis dari Dashsan.`;
+    try { await tg('setChatDescription', { chat_id: g.chatId, description: desc }); } catch { /* deskripsi sama/tidak diizinkan */ }
     if (!g.inviteLink) {
       try { g.inviteLink = (await tg('createChatInviteLink', { chat_id: g.chatId, name: 'Dashsan' })).invite_link; } catch (err) { notes.push(`link: ${err.message}`); }
     }
@@ -578,14 +584,24 @@ function messageVars(group, facts) {
 
 // *tebal* dan _miring_ → tag Telegram; variabel tak dikenal dibiarkan apa adanya
 function fillCustomTemplate(text, group, facts) {
-  const vars = messageVars(group, facts);
+  return fillWith(text, facts.kind === 'all' ? allIns.allVars(facts) : messageVars(group, facts));
+}
+function fillWith(text, vars) {
   return String(text)
     .replace(/\[([a-z_]+)\]/gi, (m, k) => (k.toLowerCase() in vars ? vars[k.toLowerCase()] : m))
     .replace(/(^|[\s(])\*([^*\n]+)\*(?=$|[\s).,!?:;])/g, '$1<b>$2</b>')
     .replace(/(^|[\s(])_([^_\n]+)_(?=$|[\s).,!?:;])/g, '$1<i>$2</i>');
 }
 
+const isAllGroup = (g) => (g.platforms || []).includes('all');
+const factsFor = (deps, state, g) => (isAllGroup(g) ? allIns.buildAllFacts(deps, state) : buildFacts(deps, g.platforms));
+
 async function writeMessage(group, facts, state, override) {
+  if (facts.kind === 'all') {
+    const tpl = override || state.messageTemplateAll || { mode: 'auto' };
+    if (tpl.mode === 'custom' && String(tpl.text || '').trim()) return { text: fillCustomTemplate(tpl.text, group, facts), writer: 'template custom All' };
+    return { text: allIns.allTemplateMessage(facts), writer: 'template All' };
+  }
   const tpl = override || state.messageTemplate || { mode: 'auto' };
   if (tpl.mode === 'custom' && String(tpl.text || '').trim()) return { text: fillCustomTemplate(tpl.text, group, facts), writer: 'template custom' };
   return writeAutoMessage(group, facts, state.instructions);
@@ -651,9 +667,11 @@ async function runGroups(deps, state, groups, trigger) {
   // 1) tulis pesan (maks 3 paralel), 2) kirim semuanya
   const written = [];
   const failed = [];
+  // data bulan/tahun untuk grup All: lanjutkan perhitungan yang belum selesai (dibatasi waktunya)
+  if (groups.some(isAllGroup)) await allIns.warmMonths(deps, state, { budgetMs: 40000 });
   for (let i = 0; i < groups.length; i += 3) {
     const batch = await Promise.allSettled(groups.slice(i, i + 3).map(async (g) => {
-      const facts = await buildFacts(deps, g.platforms);
+      const facts = await factsFor(deps, state, g);
       return { group: g, ...(await writeMessage(g, facts, state)) };
     }));
     batch.forEach((r, j) => (r.status === 'fulfilled' ? written.push(r.value) : failed.push({ group: groups[i + j], ok: false, error: r.reason?.message || String(r.reason) })));
@@ -714,8 +732,9 @@ let failedUnlocks = 0;
 // Bagian state yang dikirim ke browser — tanpa sesi & API hash
 function publicState(state) {
   const acc = state.tgAccount;
+  const { monthAgg, ...rest } = state;
   return {
-    ...state,
+    ...rest,
     tgAccount: acc ? { apiId: acc.apiId || null, hasApiHash: Boolean(acc.apiHashEnc), connected: Boolean(acc.sessionEnc), user: acc.user || null, connectedAt: acc.connectedAt || null, revokedAt: acc.revokedAt || null } : null,
     groups: state.groups.map(({ accessHash, ...g }) => g),
   };
@@ -798,7 +817,13 @@ export function createAgentApi(deps) {
 
       if (req.method === 'GET' && route === 'state') {
         const [state, st] = await Promise.all([loadState(root), status()]);
-        return sendJson(res, 200, { status: true, state: publicState(state), info: st, platforms: deps.PLATFORMS, messageVars: MESSAGE_VARS, defaultCustomTemplate: DEFAULT_CUSTOM_TEMPLATE });
+        return sendJson(res, 200, {
+          status: true, state: publicState(state), info: st, platforms: deps.PLATFORMS,
+          messageVars: MESSAGE_VARS, defaultCustomTemplate: DEFAULT_CUSTOM_TEMPLATE,
+          allVars: allIns.ALL_VARS, defaultAllTemplate: allIns.DEFAULT_ALL_CUSTOM,
+          targets: { ...allIns.DEFAULT_TARGETS, ...(state.targets || {}) },
+          monthData: allIns.monthProgress(state, deps.PLATFORMS),
+        });
       }
 
       if (req.method !== 'POST') return sendJson(res, 405, { status: false, message: 'Method tidak diizinkan' });
@@ -830,6 +855,12 @@ export function createAgentApi(deps) {
           stream.send({ type: 'error', message: err.errorMessage || err.message });
         }
         return stream.end();
+      }
+
+      if (route === 'warm') {
+        const progress = await allIns.warmMonths(deps, state, { budgetMs: 50000 });
+        await saveState(root, state);
+        return sendJson(res, 200, { status: true, progress });
       }
 
       if (route === 'tg/logout') {
@@ -873,7 +904,7 @@ export function createAgentApi(deps) {
           if (!g) continue;
           if (Array.isArray(upd.platforms)) {
             g.platforms = upd.platforms.filter((p) => valid.has(p));
-            const one = g.platforms.length === 1 && g.platforms[0] !== 'all' ? g.platforms[0] : null;
+            const one = g.platforms.length === 1 ? g.platforms[0] : null;
             if (g.via !== 'account' && TELEGRAM_TOKEN() && one && g.communityPlatform !== one && !g.removed) toPrepare.push([g, one]);
             if (!one && g.via !== 'account') g.communityPlatform = null;
           }
@@ -886,10 +917,17 @@ export function createAgentApi(deps) {
           if (Array.isArray(body.schedule.slots)) state.schedule.slots = body.schedule.slots.map(Number).filter((s) => SLOTS.includes(s));
         }
         if (typeof body.instructions === 'string') state.instructions = body.instructions.slice(0, 2000);
-        if (body.messageTemplate && ['auto', 'custom'].includes(body.messageTemplate.mode)) {
-          state.messageTemplate = { mode: body.messageTemplate.mode, text: String(body.messageTemplate.text || '').slice(0, 4000) };
+        for (const key of ['messageTemplate', 'messageTemplateAll']) {
+          if (body[key] && ['auto', 'custom'].includes(body[key].mode)) state[key] = { mode: body[key].mode, text: String(body[key].text || '').slice(0, 4000) };
         }
-        const names = Object.fromEntries(deps.PLATFORMS.map((p) => [p.slug, p.name]));
+        if (body.targets && typeof body.targets === 'object') {
+          state.targets = {};
+          for (const p of deps.PLATFORMS) {
+            const v = Math.round(Number(body.targets[p.slug]));
+            if (Number.isFinite(v) && v >= 0) state.targets[p.slug] = v;
+          }
+        }
+        const names = { ...Object.fromEntries(deps.PLATFORMS.map((p) => [p.slug, p.name])), all: 'All' };
         for (const [g, slug] of toPrepare) {
           const wasEnabled = g.enabled;
           await prepareBotGroup(g, slug, { names, rename: false });
@@ -910,7 +948,7 @@ export function createAgentApi(deps) {
       }
 
       if (route === 'detect') {
-        const names = Object.fromEntries(deps.PLATFORMS.map((p) => [p.slug, p.name]));
+        const names = { ...Object.fromEntries(deps.PLATFORMS.map((p) => [p.slug, p.name])), all: 'All' };
         const r = await detectGroups(state, { names, prefix: String(body.prefix ?? '').trim().slice(0, 40) });
         await saveState(root, state);
         return sendJson(res, 200, { status: true, ...r, state: publicState(state) });
@@ -918,7 +956,7 @@ export function createAgentApi(deps) {
 
       if (route === 'preview') {
         const g = findGroup(state, body.chatId);
-        const facts = await buildFacts(deps, g.platforms);
+        const facts = await factsFor(deps, state, g);
         const t = body.template;
         const override = t && ['auto', 'custom'].includes(t.mode) ? { mode: t.mode, text: String(t.text || '').slice(0, 4000) } : null;
         const { text, writer } = await writeMessage(g, facts, state, override);

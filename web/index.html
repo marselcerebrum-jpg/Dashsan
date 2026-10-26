@@ -270,9 +270,14 @@
 
     <section class="card" id="agTplCard" style="--card-c: var(--s3)">
       <div class="card-head"><h2>Template Pesan</h2><span class="muted">Atur isi pesan yang dikirim ke grup (berlaku untuk jadwal &amp; kirim manual)</span></div>
+      <div class="ag-tabs" role="tablist">
+        <button type="button" class="ag-tab active" data-kind="platform" role="tab">📱 Grup per platform <span class="muted" id="agTabCountP"></span></button>
+        <button type="button" class="ag-tab" data-kind="all" role="tab">🌐 Grup All (gabungan) <span class="muted" id="agTabCountA"></span></button>
+      </div>
+      <p class="muted ag-hint" id="agTabHint"></p>
       <div class="ag-modes">
-        <label class="ag-mode"><input type="radio" name="agTplMode" value="auto" /> <span><b>Otomatis</b><br /><span class="muted">Template bawaan lengkap; sapaan &amp; kalimat penyemangat berganti-ganti tiap jadwal</span></span></label>
-        <label class="ag-mode"><input type="radio" name="agTplMode" value="custom" /> <span><b>Custom</b><br /><span class="muted">Tulis sendiri memakai variabel, mis. <code>Halo [platform], omzet kamu hari ini [omzet]</code></span></span></label>
+        <label class="ag-mode"><input type="radio" name="agTplMode" value="auto" /> <span><b>Otomatis</b><br /><span class="muted" id="agModeAutoDesc"></span></span></label>
+        <label class="ag-mode"><input type="radio" name="agTplMode" value="custom" /> <span><b>Custom</b><br /><span class="muted" id="agModeCustomDesc"></span></span></label>
       </div>
       <div id="agTplCustom" hidden>
         <textarea id="agTplText" class="ag-textarea" rows="13" spellcheck="false"></textarea>
@@ -287,6 +292,20 @@
         <span id="agTplState" class="muted"></span>
       </div>
       <div id="agTplPreviewBox" class="ag-bubble" hidden></div>
+    </section>
+
+    <section class="card" id="agTargetCard" style="--card-c: var(--s4)">
+      <div class="card-head"><h2>🎯 Target Bulanan</h2><span class="muted">Dipakai di pesan grup All (bagian TARGET BULANAN)</span></div>
+      <p class="muted ag-hint">Target omzet per bulan untuk tiap platform. Berlaku setiap bulan sampai diubah.</p>
+      <div class="ag-targets" id="agTargets"></div>
+      <div class="ag-row">
+        <b id="agTargetTotal"></b>
+        <button id="agTargetSave" type="button" class="btn primary">Simpan target</button>
+      </div>
+      <div class="ag-row">
+        <span id="agMonthState" class="muted"></span>
+        <button id="agWarm" type="button" class="btn">Siapkan data bulan &amp; tahun</button>
+      </div>
     </section>
 
     <section class="card" style="--card-c: var(--s5)">

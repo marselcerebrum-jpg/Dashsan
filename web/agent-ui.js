@@ -3,7 +3,14 @@
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const SLOTS = [0, 3, 6, 9, 12, 15, 18, 21];
-const ag = { state: null, info: null, platforms: [], loaded: false, dirty: false, vars: [], defaultTpl: '', tplDirty: false };
+const ag = {
+  state: null, info: null, platforms: [], loaded: false, dirty: false,
+  // template terpisah: 'platform' (grup per platform) dan 'all' (grup gabungan)
+  tplKind: 'platform', drafts: {}, vars: { platform: [], all: [] }, defaults: { platform: '', all: '' },
+  targets: {}, monthData: null,
+};
+const isAll = (g) => (g.platforms || []).includes('all');
+const TPL_KEY = { platform: 'messageTemplate', all: 'messageTemplateAll' };
 
 // token buka-kunci menu disimpan per tab (hilang saat tab ditutup)
 const getToken = () => { try { return sessionStorage.getItem('dashsan.agentToken') || ''; } catch { return ''; } };
@@ -121,7 +128,7 @@ function renderGroups() {
   const head = '<thead><tr><th>Grup</th><th>Dikirim lewat</th><th>Platform yang dikirim</th><th>Aktif</th><th></th></tr></thead>';
   const body = groups.length
     ? groups.map((g) => `<tr data-chat="${esc(g.chatId)}">
-        <td><input class="ag-title" data-title value="${esc(g.title)}" maxlength="128" ${g.removed ? 'disabled' : ''} /><br /><span class="muted">${esc(g.chatId)}${g.removed ? ' • <span class="down">bot sudah dikeluarkan</span>' : ''}</span></td>
+        <td><input class="ag-title" data-title value="${esc(g.title)}" maxlength="128" ${g.removed ? 'disabled' : ''} />${isAll(g) ? '<span class="ag-badge">ALL</span>' : ''}<br /><span class="muted">${esc(g.chatId)}${g.removed ? ' • <span class="down">bot sudah dikeluarkan</span>' : ''}</span></td>
         <td>${g.via === 'account' ? 'Akun Telegram' : 'Bot'}${g.inviteLink ? `<br /><a class="ag-link" href="${esc(g.inviteLink)}" target="_blank" rel="noopener">Link undangan</a>` : ''}</td>
         <td>${platformPicker(g)}</td>
         <td><input type="checkbox" data-enabled ${g.enabled ? 'checked' : ''} ${g.removed ? 'disabled' : ''} /></td>
@@ -182,7 +189,11 @@ function renderBotCommunity() {
   $('agFolderName').textContent = $('agCommTitle').value || 'Dashsan CS';
   if (!bot) return;
   const bySlug = new Map(ag.state.groups.filter((g) => g.communityPlatform && !g.removed).map((g) => [g.communityPlatform, g]));
-  $('agPlatLinks').innerHTML = ag.platforms.map((p) => {
+  const allGroup = ag.state.groups.find((g) => isAll(g) && !g.removed);
+  const allCard = allGroup
+    ? `<div class="ag-plink all done"><span><b>🌐 All — insight gabungan</b><br /><span class="muted">${esc(allGroup.title)}</span></span>${allGroup.inviteLink ? `<a class="btn" href="${esc(allGroup.inviteLink)}" target="_blank" rel="noopener">Link undangan</a>` : '<span class="up">✓</span>'}</div>`
+    : `<div class="ag-plink all"><span><b>🌐 All — insight gabungan</b><br /><span class="muted">Overview semua platform + target bulanan</span></span><a class="btn primary" data-startgroup="all" href="${esc(startGroupUrl('all'))}" target="_blank" rel="noopener">Buat / pilih grup All</a></div>`;
+  $('agPlatLinks').innerHTML = allCard + ag.platforms.map((p) => {
     const g = bySlug.get(p.slug);
     return g
       ? `<div class="ag-plink done"><span><b>${esc(p.name)}</b><br /><span class="muted">${esc(g.title)}${g.setupNote ? ` • ⚠ ${esc(g.setupNote)}` : ''}</span></span>${g.inviteLink ? `<a class="btn" href="${esc(g.inviteLink)}" target="_blank" rel="noopener">Link undangan</a>` : '<span class="up">✓</span>'}</div>`
@@ -195,7 +206,7 @@ let watchTimer = null;
 function watchForGroups(slug) {
   clearInterval(watchTimer);
   const until = Date.now() + 180000;
-  const name = ag.platforms.find((p) => p.slug === slug)?.name || slug;
+  const name = slug === 'all' ? 'All' : ag.platforms.find((p) => p.slug === slug)?.name || slug;
   $('agWatchMsg').textContent = `Menunggu grup ${name} di Telegram… (cek otomatis tiap 5 detik)`;
   const tick = async () => {
     try {
@@ -245,29 +256,72 @@ function renderCommunity() {
 // pratinjau dengan tampilan mirip Telegram: hanya tag tebal/miring yang dipertahankan
 const bubbleHtml = (t) => esc(t).replace(/&lt;(\/?)(b|i|u|s|code)&gt;/g, '<$1$2>');
 
-function renderTemplate() {
-  const t = ag.state.messageTemplate || { mode: 'auto', text: '' };
-  if (!ag.tplDirty) {
-    document.querySelectorAll('input[name="agTplMode"]').forEach((r) => { r.checked = r.value === t.mode; });
-    $('agTplText').value = t.text || ag.defaultTpl;
-  }
-  $('agTplCustom').hidden = currentMode() !== 'custom';
-  if (!$('agTplVars').dataset.ready) {
-    $('agTplVars').innerHTML = ag.vars.map(([k, d]) => `<button type="button" class="chip" data-tvar="[${esc(k)}]" title="${esc(d)}">[${esc(k)}]</button>`).join('');
-    $('agTplVars').dataset.ready = '1';
-  }
-  const groups = ag.state.groups.filter((g) => !g.removed && g.platforms?.length);
-  const prev = $('agTplGroup').value;
-  $('agTplGroup').innerHTML = groups.length ? groups.map((g) => `<option value="${esc(g.chatId)}">${esc(g.title)}</option>`).join('') : '<option value="">(belum ada grup)</option>';
-  if (groups.some((g) => g.chatId === prev)) $('agTplGroup').value = prev;
-  $('agTplState').textContent = ag.tplDirty ? 'Belum disimpan' : `Tersimpan: mode ${t.mode === 'custom' ? 'Custom' : 'Otomatis'}`;
+function savedTemplate(kind) {
+  return ag.state[TPL_KEY[kind]] || { mode: 'auto', text: '' };
 }
-const currentMode = () => document.querySelector('input[name="agTplMode"]:checked')?.value || 'auto';
-const currentTemplate = () => ({ mode: currentMode(), text: $('agTplText').value });
+// draf per tab disimpan di memori supaya pindah tab tidak menghapus ketikan
+function draft(kind) {
+  if (!ag.drafts[kind]) { const t = savedTemplate(kind); ag.drafts[kind] = { mode: t.mode, text: t.text || ag.defaults[kind], dirty: false }; }
+  return ag.drafts[kind];
+}
+
+function renderTemplate() {
+  const kind = ag.tplKind;
+  const d = draft(kind);
+  document.querySelectorAll('.ag-tab').forEach((b) => b.classList.toggle('active', b.dataset.kind === kind));
+  const groups = ag.state.groups.filter((g) => !g.removed && g.platforms?.length);
+  const mine = groups.filter((g) => (kind === 'all' ? isAll(g) : !isAll(g)));
+  $('agTabCountP').textContent = `(${groups.filter((g) => !isAll(g)).length} grup)`;
+  $('agTabCountA').textContent = `(${groups.filter(isAll).length} grup)`;
+  $('agTabHint').textContent = kind === 'all'
+    ? 'Dipakai untuk grup yang platformnya "Semua platform" (mis. grup All): overview, sales per platform, pending/expired, dan target bulanan.'
+    : 'Dipakai untuk grup yang berisi satu atau beberapa platform tertentu (mis. grup JadiASN).';
+  $('agModeAutoDesc').textContent = kind === 'all'
+    ? 'Format "Update All Platform": overview, sales hari ini per platform, pending & expired, target bulanan'
+    : 'Template bawaan lengkap; sapaan & kalimat penyemangat berganti-ganti tiap jadwal';
+  $('agModeCustomDesc').innerHTML = kind === 'all'
+    ? 'Tulis sendiri, mis. <code>Hari ini [hari_ini] [hari_ini_vs]</code>'
+    : 'Tulis sendiri memakai variabel, mis. <code>Halo [platform], omzet kamu hari ini [omzet]</code>';
+  document.querySelectorAll('input[name="agTplMode"]').forEach((r) => { r.checked = r.value === d.mode; });
+  if ($('agTplText').dataset.kind !== kind) { $('agTplText').value = d.text; $('agTplText').dataset.kind = kind; }
+  $('agTplCustom').hidden = d.mode !== 'custom';
+  if ($('agTplVars').dataset.kind !== kind) {
+    $('agTplVars').innerHTML = ag.vars[kind].map(([k, desc]) => `<button type="button" class="chip" data-tvar="[${esc(k)}]" title="${esc(desc)}">[${esc(k)}]</button>`).join('');
+    $('agTplVars').dataset.kind = kind;
+  }
+  const prev = $('agTplGroup').value;
+  $('agTplGroup').innerHTML = mine.length
+    ? mine.map((g) => `<option value="${esc(g.chatId)}">${esc(g.title)}</option>`).join('')
+    : `<option value="">(belum ada grup ${kind === 'all' ? 'All' : 'per platform'})</option>`;
+  if (mine.some((g) => g.chatId === prev)) $('agTplGroup').value = prev;
+  const saved = savedTemplate(kind);
+  $('agTplState').textContent = d.dirty ? 'Belum disimpan' : `Tersimpan: mode ${saved.mode === 'custom' ? 'Custom' : 'Otomatis'}`;
+}
+const currentMode = () => draft(ag.tplKind).mode;
+const currentTemplate = () => ({ mode: draft(ag.tplKind).mode, text: $('agTplText').value });
+
+function renderTargets() {
+  const box = $('agTargets');
+  if (!box.dataset.ready) {
+    box.innerHTML = ag.platforms.map((p) => `<label>${esc(p.name)}<input data-target="${esc(p.slug)}" inputmode="numeric" /></label>`).join('');
+    box.dataset.ready = '1';
+  }
+  box.querySelectorAll('[data-target]').forEach((inp) => { if (!inp.matches(':focus')) inp.value = Number(ag.targets[inp.dataset.target] || 0).toLocaleString('id-ID'); });
+  updateTargetTotal();
+  const m = ag.monthData;
+  $('agMonthState').textContent = m ? (m.done >= m.total ? `✓ Data bulan lalu & tahunan siap (${m.total} bulan-platform)` : `Data bulan & tahun: ${m.done}/${m.total} siap — sisanya dihitung otomatis saat jadwal berjalan, atau klik tombol ini`) : '';
+  $('agWarm').hidden = Boolean(m && m.done >= m.total);
+}
+const parseRp = (v) => Number(String(v).replace(/[^0-9]/g, '')) || 0;
+function updateTargetTotal() {
+  const total = [...$('agTargets').querySelectorAll('[data-target]')].reduce((a, i) => a + parseRp(i.value), 0);
+  $('agTargetTotal').textContent = `Total target: Rp${total.toLocaleString('id-ID')}`;
+}
 
 function renderAll() {
   renderStatus();
   renderTemplate();
+  renderTargets();
   renderAccount();
   renderCommunity();
   renderGroups();
@@ -304,8 +358,10 @@ async function save() {
 
 async function refresh() {
   const r = await api('state');
-  ag.vars = r.messageVars || [];
-  ag.defaultTpl = r.defaultCustomTemplate || '';
+  ag.vars = { platform: r.messageVars || [], all: r.allVars || [] };
+  ag.defaults = { platform: r.defaultCustomTemplate || '', all: r.defaultAllTemplate || '' };
+  ag.targets = r.targets || {};
+  ag.monthData = r.monthData || null;
   ag.state = r.state;
   ag.info = r.info;
   ag.platforms = r.platforms;
@@ -317,9 +373,18 @@ function setup() {
   $('agRefresh').addEventListener('click', (e) => busy(e.target, 'Memuat…', async () => { await refresh(); notice(''); }));
   $('agSave').addEventListener('click', (e) => busy(e.target, 'Menyimpan…', save));
   // ---- template pesan ----
-  const markTpl = () => { ag.tplDirty = true; renderTemplate(); };
-  document.querySelectorAll('input[name="agTplMode"]').forEach((r) => r.addEventListener('change', markTpl));
-  $('agTplText').addEventListener('input', () => { ag.tplDirty = true; $('agTplState').textContent = 'Belum disimpan'; });
+  document.querySelectorAll('.ag-tab').forEach((b) => b.addEventListener('click', () => {
+    draft(ag.tplKind).text = $('agTplText').value; // simpan ketikan tab sebelumnya
+    ag.tplKind = b.dataset.kind;
+    $('agTplPreviewBox').hidden = true;
+    renderTemplate();
+  }));
+  document.querySelectorAll('input[name="agTplMode"]').forEach((r) => r.addEventListener('change', () => {
+    Object.assign(draft(ag.tplKind), { mode: r.value, dirty: true });
+    renderTemplate();
+  }));
+  const markText = () => { Object.assign(draft(ag.tplKind), { text: $('agTplText').value, dirty: true }); $('agTplState').textContent = 'Belum disimpan'; };
+  $('agTplText').addEventListener('input', markText);
   $('agTplVars').addEventListener('click', (e) => {
     const v = e.target.closest('[data-tvar]')?.dataset.tvar;
     if (!v) return;
@@ -328,14 +393,12 @@ function setup() {
     box.value = value.slice(0, a) + v + value.slice(b);
     box.focus();
     box.selectionStart = box.selectionEnd = a + v.length;
-    ag.tplDirty = true;
-    $('agTplState').textContent = 'Belum disimpan';
+    markText();
   });
   $('agTplSample').addEventListener('click', () => {
     if ($('agTplText').value.trim() && !confirm('Ganti isi template dengan contoh?')) return;
-    $('agTplText').value = ag.defaultTpl;
-    ag.tplDirty = true;
-    $('agTplState').textContent = 'Belum disimpan';
+    $('agTplText').value = ag.defaults[ag.tplKind];
+    markText();
   });
   $('agTplPreview').addEventListener('click', (e) => busy(e.target, 'Membuat…', async () => {
     const chatId = $('agTplGroup').value;
@@ -349,11 +412,29 @@ function setup() {
   $('agTplSave').addEventListener('click', (e) => busy(e.target, 'Menyimpan…', async () => {
     const t = currentTemplate();
     if (t.mode === 'custom' && !t.text.trim()) throw new Error('Template custom masih kosong.');
-    const r = await api('settings', { messageTemplate: t });
+    const r = await api('settings', { [TPL_KEY[ag.tplKind]]: t });
     ag.state = r.state;
-    ag.tplDirty = false;
+    ag.drafts[ag.tplKind] = { ...t, dirty: false };
     renderAll();
-    notice(`Template disimpan (mode ${t.mode === 'custom' ? 'Custom' : 'Otomatis'}). Pesan berikutnya memakai template ini.`);
+    notice(`Template ${ag.tplKind === 'all' ? 'grup All' : 'grup per platform'} disimpan (mode ${t.mode === 'custom' ? 'Custom' : 'Otomatis'}).`);
+  }));
+
+  // ---- target bulanan ----
+  $('agTargets').addEventListener('input', (e) => { if (e.target.matches('[data-target]')) updateTargetTotal(); });
+  $('agTargets').addEventListener('focusout', (e) => { if (e.target.matches('[data-target]')) e.target.value = parseRp(e.target.value).toLocaleString('id-ID'); });
+  $('agTargetSave').addEventListener('click', (e) => busy(e.target, 'Menyimpan…', async () => {
+    const targets = Object.fromEntries([...$('agTargets').querySelectorAll('[data-target]')].map((i) => [i.dataset.target, parseRp(i.value)]));
+    await api('settings', { targets });
+    await refresh();
+    notice('Target bulanan tersimpan.');
+  }));
+  $('agWarm').addEventListener('click', (e) => busy(e.target, 'Menghitung…', async () => {
+    for (let i = 0; i < 10; i++) {
+      const r = await api('warm', {});
+      ag.monthData = r.progress;
+      renderTargets();
+      if (r.progress.done >= r.progress.total) break;
+    }
   }));
 
   $('agUnlockForm').addEventListener('submit', async (e) => {
