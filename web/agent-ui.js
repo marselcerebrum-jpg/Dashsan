@@ -318,6 +318,107 @@ function updateTargetTotal() {
   $('agTargetTotal').textContent = `Total target: Rp${total.toLocaleString('id-ID')}`;
 }
 
+// ---------- kartu buka/tutup + navigasi cepat ----------
+const SECTIONS = [
+  ['status', 'Status Agent', '📋'], ['akun', 'Akun Telegram', '👤'], ['komunitas', 'Komunitas', '🌐'],
+  ['grup', 'Grup Telegram', '👥'], ['jadwal', 'Jadwal Otomatis', '⏰'], ['ai', 'Instruksi untuk AI', '🤖'],
+  ['template', 'Template Pesan', '📝'], ['target', 'Target Bulanan', '🎯'], ['kirim', 'Pratinjau & Kirim Manual', '📤'],
+  ['riwayat', 'Riwayat Pengiriman', '🕘'],
+];
+const OPEN_KEY = 'dashsan.agentOpen';
+const loadOpen = () => { try { return new Set(JSON.parse(localStorage.getItem(OPEN_KEY)) || ['status']); } catch { return new Set(['status']); } };
+const saveOpen = (set) => { try { localStorage.setItem(OPEN_KEY, JSON.stringify([...set])); } catch { /* abaikan */ } };
+const openSet = loadOpen();
+const cardOf = (key) => document.querySelector(`#agentView section.card[data-sec="${key}"]`);
+
+function setOpen(key, open) {
+  const card = cardOf(key);
+  if (!card) return;
+  card.classList.toggle('collapsed', !open);
+  card.querySelector('.card-head h2')?.setAttribute('aria-expanded', String(open));
+  open ? openSet.add(key) : openSet.delete(key);
+  saveOpen(openSet);
+  renderNav();
+}
+
+function setupAccordion() {
+  const cards = [...$('agentView').querySelectorAll('section.card')].filter((c) => c.id !== 'agLock');
+  for (const [key, title] of SECTIONS) {
+    const card = cards.find((c) => c.querySelector('h2')?.textContent.includes(title));
+    if (!card) continue;
+    card.dataset.sec = key;
+    card.classList.add('ag-collapsible');
+    const head = card.querySelector('.card-head');
+    const body = document.createElement('div');
+    body.className = 'ag-body';
+    [...card.children].filter((el) => el !== head).forEach((el) => body.appendChild(el));
+    card.appendChild(body);
+    const h2 = head.querySelector('h2');
+    h2.insertAdjacentHTML('afterbegin', '<span class="ag-chev" aria-hidden="true">▶</span>');
+    h2.setAttribute('role', 'button');
+    h2.tabIndex = 0;
+    h2.insertAdjacentHTML('afterend', `<span class="ag-sum" data-sum="${key}"></span>`);
+    head.addEventListener('click', (e) => {
+      if (e.target.closest('button, a, input, select, textarea, label')) return;
+      setOpen(key, card.classList.contains('collapsed'));
+    });
+    h2.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(key, card.classList.contains('collapsed')); } });
+    card.classList.toggle('collapsed', !openSet.has(key));
+    h2.setAttribute('aria-expanded', String(openSet.has(key)));
+  }
+  $('agNav').addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    if (b.dataset.go) {
+      setOpen(b.dataset.go, true);
+      cardOf(b.dataset.go).scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else if (b.dataset.all) {
+      for (const [key] of SECTIONS) if (cardOf(key) && !cardOf(key).hidden) setOpen(key, b.dataset.all === 'open');
+    }
+  });
+  // navigasi menempel tepat di bawah header
+  const syncTop = () => {
+    const bar = document.querySelector('.topbar');
+    const sticky = getComputedStyle(bar).position === 'sticky';
+    $('agentView').style.setProperty('--ag-top', `${sticky ? bar.offsetHeight : 0}px`);
+  };
+  syncTop();
+  window.addEventListener('resize', syncTop);
+  window.addEventListener('hashchange', () => setTimeout(syncTop, 0));
+  window.addEventListener('dashsan:agent', () => setTimeout(syncTop, 0));
+}
+
+function renderNav() {
+  const chips = SECTIONS.filter(([key]) => cardOf(key) && !cardOf(key).hidden)
+    .map(([key, title, icon]) => `<button type="button" class="chip ${openSet.has(key) ? 'open' : ''}" data-go="${key}" title="${esc(title)}">${icon} ${esc(title.replace(' & Kirim Manual', ' & Kirim').replace(' Pengiriman', '').replace(' Telegram', ''))}</button>`);
+  $('agNav').innerHTML = chips.join('') + '<span class="ag-nav-sep"></span><button type="button" class="chip" data-all="open">Buka semua</button><button type="button" class="chip" data-all="close">Tutup semua</button>';
+}
+
+// ringkasan singkat di judul tiap kartu (tetap terlihat saat kartu tertutup)
+function renderSummaries() {
+  const st = ag.state;
+  const groups = st.groups.filter((g) => !g.removed);
+  const active = groups.filter((g) => g.enabled && g.platforms?.length);
+  const ready = groups.filter((g) => g.communityPlatform).length;
+  const tplMode = (k) => ((st[k] || {}).mode === 'custom' ? 'Custom' : 'Otomatis');
+  const last = st.history?.[0];
+  const targetTotal = Object.values(ag.targets || {}).reduce((a, v) => a + Number(v || 0), 0);
+  const sum = {
+    status: `${ag.info.telegram.username ? '✓ Bot' : '✗ Bot'} • Jadwal ${st.schedule.enabled ? 'aktif' : 'nonaktif'}`,
+    akun: st.tgAccount?.connected ? `✓ ${st.tgAccount.user?.name || 'Terhubung'}` : 'Opsional • belum terhubung',
+    komunitas: `${ready}/${ag.platforms.length + 1} grup siap`,
+    grup: `${active.length} aktif dari ${groups.length}`,
+    jadwal: st.schedule.enabled ? `Aktif • ${st.schedule.slots.length}× sehari` : 'Nonaktif',
+    ai: st.instructions ? 'Ada instruksi' : 'Kosong',
+    template: `Platform: ${tplMode('messageTemplate')} • All: ${tplMode('messageTemplateAll')}`,
+    target: targetTotal ? `Rp${targetTotal.toLocaleString('id-ID')} / bulan` : 'Belum diisi',
+    kirim: '',
+    riwayat: last ? `Terakhir ${fmtTime(last.at)} • ${last.ok ? 'terkirim' : 'gagal'}` : 'Belum ada',
+  };
+  document.querySelectorAll('[data-sum]').forEach((el) => { el.textContent = sum[el.dataset.sum] ?? ''; });
+  renderNav();
+}
+
 function renderAll() {
   renderStatus();
   renderTemplate();
@@ -327,6 +428,7 @@ function renderAll() {
   renderGroups();
   renderSchedule();
   renderHistory();
+  renderSummaries();
   ag.dirty = false;
 }
 
@@ -602,6 +704,7 @@ async function show() {
   }
 }
 
+setupAccordion();
 setup();
 window.addEventListener('dashsan:agent', show);
 if (document.body.dataset.view === 'agent') show();
