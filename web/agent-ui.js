@@ -100,7 +100,7 @@ function renderStatus() {
   $('agStatus').innerHTML = [
     item('Bot Telegram', telegram.configured && !telegram.error, telegram.username ? `@${esc(telegram.username)}` : telegram.error ? esc(telegram.error) : 'TELEGRAM_BOT_TOKEN belum diatur'),
     item('Akun Telegram (opsional)', Boolean(ag.state.tgAccount?.connected), ag.state.tgAccount?.connected ? esc(ag.state.tgAccount.user?.name || 'terhubung') : 'Belum terhubung — scan QR di bawah'),
-    item('Penulis pesan (AI)', ai.configured, ai.configured ? `Claude (${esc(ai.model)})` : 'ANTHROPIC_API_KEY belum diatur — memakai template'),
+    item('Penulis pesan', true, ai.configured ? `Claude (${esc(ai.model)})` : 'Template otomatis (gratis)'),
     item('Penyimpanan pengaturan', storage === 'vercel-blob' || !location.hostname.endsWith('vercel.app'), storage === 'vercel-blob' ? 'Vercel Blob' : 'File lokal (khusus komputer ini)'),
     item('Jadwal otomatis', cron.configured && ag.state.schedule.enabled, !cron.configured ? 'CRON_SECRET belum diatur' : ag.state.schedule.enabled ? `Aktif: ${ag.state.schedule.slots.map((s) => `${String(s).padStart(2, '0')}.00`).join(', ')} WIB` : 'Nonaktif'),
   ].join('');
