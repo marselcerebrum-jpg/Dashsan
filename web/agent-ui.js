@@ -3,7 +3,7 @@
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const SLOTS = [0, 3, 6, 9, 12, 15, 18, 21];
-const ag = { state: null, info: null, platforms: [], loaded: false, dirty: false };
+const ag = { state: null, info: null, platforms: [], loaded: false, dirty: false, vars: [], defaultTpl: '', tplDirty: false };
 
 // token buka-kunci menu disimpan per tab (hilang saat tab ditutup)
 const getToken = () => { try { return sessionStorage.getItem('dashsan.agentToken') || ''; } catch { return ''; } };
@@ -104,6 +104,7 @@ function renderStatus() {
     item('Penyimpanan pengaturan', storage === 'vercel-blob' || !location.hostname.endsWith('vercel.app'), storage === 'vercel-blob' ? 'Vercel Blob' : 'File lokal (khusus komputer ini)'),
     item('Jadwal otomatis', cron.configured && ag.state.schedule.enabled, !cron.configured ? 'CRON_SECRET belum diatur' : ag.state.schedule.enabled ? `Aktif: ${ag.state.schedule.slots.map((s) => `${String(s).padStart(2, '0')}.00`).join(', ')} WIB` : 'Nonaktif'),
   ].join('');
+  $('agInstrCard').hidden = !ai.configured;
   // panduan bot dibuka selama bot sudah ada tapi belum punya grup
   $('agGuide').open = Boolean(telegram.username) && !ag.state.groups.some((g) => g.via !== 'account');
 }
@@ -241,8 +242,32 @@ function renderCommunity() {
   $('agCommCreate').textContent = groups.length ? 'Lengkapi grup & perbarui link komunitas' : 'Buat komunitas & grup';
 }
 
+// pratinjau dengan tampilan mirip Telegram: hanya tag tebal/miring yang dipertahankan
+const bubbleHtml = (t) => esc(t).replace(/&lt;(\/?)(b|i|u|s|code)&gt;/g, '<$1$2>');
+
+function renderTemplate() {
+  const t = ag.state.messageTemplate || { mode: 'auto', text: '' };
+  if (!ag.tplDirty) {
+    document.querySelectorAll('input[name="agTplMode"]').forEach((r) => { r.checked = r.value === t.mode; });
+    $('agTplText').value = t.text || ag.defaultTpl;
+  }
+  $('agTplCustom').hidden = currentMode() !== 'custom';
+  if (!$('agTplVars').dataset.ready) {
+    $('agTplVars').innerHTML = ag.vars.map(([k, d]) => `<button type="button" class="chip" data-tvar="[${esc(k)}]" title="${esc(d)}">[${esc(k)}]</button>`).join('');
+    $('agTplVars').dataset.ready = '1';
+  }
+  const groups = ag.state.groups.filter((g) => !g.removed && g.platforms?.length);
+  const prev = $('agTplGroup').value;
+  $('agTplGroup').innerHTML = groups.length ? groups.map((g) => `<option value="${esc(g.chatId)}">${esc(g.title)}</option>`).join('') : '<option value="">(belum ada grup)</option>';
+  if (groups.some((g) => g.chatId === prev)) $('agTplGroup').value = prev;
+  $('agTplState').textContent = ag.tplDirty ? 'Belum disimpan' : `Tersimpan: mode ${t.mode === 'custom' ? 'Custom' : 'Otomatis'}`;
+}
+const currentMode = () => document.querySelector('input[name="agTplMode"]:checked')?.value || 'auto';
+const currentTemplate = () => ({ mode: currentMode(), text: $('agTplText').value });
+
 function renderAll() {
   renderStatus();
+  renderTemplate();
   renderAccount();
   renderCommunity();
   renderGroups();
@@ -279,6 +304,8 @@ async function save() {
 
 async function refresh() {
   const r = await api('state');
+  ag.vars = r.messageVars || [];
+  ag.defaultTpl = r.defaultCustomTemplate || '';
   ag.state = r.state;
   ag.info = r.info;
   ag.platforms = r.platforms;
@@ -289,6 +316,46 @@ async function refresh() {
 function setup() {
   $('agRefresh').addEventListener('click', (e) => busy(e.target, 'Memuat…', async () => { await refresh(); notice(''); }));
   $('agSave').addEventListener('click', (e) => busy(e.target, 'Menyimpan…', save));
+  // ---- template pesan ----
+  const markTpl = () => { ag.tplDirty = true; renderTemplate(); };
+  document.querySelectorAll('input[name="agTplMode"]').forEach((r) => r.addEventListener('change', markTpl));
+  $('agTplText').addEventListener('input', () => { ag.tplDirty = true; $('agTplState').textContent = 'Belum disimpan'; });
+  $('agTplVars').addEventListener('click', (e) => {
+    const v = e.target.closest('[data-tvar]')?.dataset.tvar;
+    if (!v) return;
+    const box = $('agTplText');
+    const { selectionStart: a, selectionEnd: b, value } = box;
+    box.value = value.slice(0, a) + v + value.slice(b);
+    box.focus();
+    box.selectionStart = box.selectionEnd = a + v.length;
+    ag.tplDirty = true;
+    $('agTplState').textContent = 'Belum disimpan';
+  });
+  $('agTplSample').addEventListener('click', () => {
+    if ($('agTplText').value.trim() && !confirm('Ganti isi template dengan contoh?')) return;
+    $('agTplText').value = ag.defaultTpl;
+    ag.tplDirty = true;
+    $('agTplState').textContent = 'Belum disimpan';
+  });
+  $('agTplPreview').addEventListener('click', (e) => busy(e.target, 'Membuat…', async () => {
+    const chatId = $('agTplGroup').value;
+    if (!chatId) throw new Error('Belum ada grup untuk pratinjau.');
+    const r = await api('preview', { chatId, template: currentTemplate() });
+    $('agTplPreviewBox').hidden = false;
+    $('agTplPreviewBox').innerHTML = bubbleHtml(r.text);
+    const unknown = [...new Set((r.text.match(/\[[a-z_]+\]/gi) || []))];
+    notice(unknown.length ? `Variabel tidak dikenal: ${unknown.join(', ')} — cek ejaannya.` : '', unknown.length > 0);
+  }));
+  $('agTplSave').addEventListener('click', (e) => busy(e.target, 'Menyimpan…', async () => {
+    const t = currentTemplate();
+    if (t.mode === 'custom' && !t.text.trim()) throw new Error('Template custom masih kosong.');
+    const r = await api('settings', { messageTemplate: t });
+    ag.state = r.state;
+    ag.tplDirty = false;
+    renderAll();
+    notice(`Template disimpan (mode ${t.mode === 'custom' ? 'Custom' : 'Otomatis'}). Pesan berikutnya memakai template ini.`);
+  }));
+
   $('agUnlockForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const res = await request('unlock', { password: $('agUnlockPw').value });

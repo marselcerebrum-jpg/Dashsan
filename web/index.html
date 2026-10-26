@@ -261,12 +261,33 @@
         <div class="ag-slots" id="agSlots"></div>
         <p class="muted ag-hint">Jam dalam WIB. Di paket gratis Vercel, jadwal bisa terlambat sampai ±1 jam dari jam yang dipilih.</p>
       </section>
-      <section class="card" style="--card-c: var(--s2)">
+      <section class="card" id="agInstrCard" style="--card-c: var(--s2)">
         <div class="card-head"><h2>Instruksi untuk AI</h2></div>
         <textarea id="agInstr" class="ag-textarea" rows="5" placeholder="Opsional. Mis.: Sapa dengan &quot;Halo tim CS!&quot;. Fokus ke follow-up customer pending. Sebut target harian JadiASN Rp5 jt."></textarea>
         <p class="muted ag-hint">Berlaku untuk semua pesan (jadwal &amp; manual). Klik Simpan pengaturan setelah mengubah.</p>
       </section>
     </div>
+
+    <section class="card" id="agTplCard" style="--card-c: var(--s3)">
+      <div class="card-head"><h2>Template Pesan</h2><span class="muted">Atur isi pesan yang dikirim ke grup (berlaku untuk jadwal &amp; kirim manual)</span></div>
+      <div class="ag-modes">
+        <label class="ag-mode"><input type="radio" name="agTplMode" value="auto" /> <span><b>Otomatis</b><br /><span class="muted">Template bawaan lengkap; sapaan &amp; kalimat penyemangat berganti-ganti tiap jadwal</span></span></label>
+        <label class="ag-mode"><input type="radio" name="agTplMode" value="custom" /> <span><b>Custom</b><br /><span class="muted">Tulis sendiri memakai variabel, mis. <code>Halo [platform], omzet kamu hari ini [omzet]</code></span></span></label>
+      </div>
+      <div id="agTplCustom" hidden>
+        <textarea id="agTplText" class="ag-textarea" rows="13" spellcheck="false"></textarea>
+        <p class="muted ag-hint">Klik variabel untuk menyisipkan di posisi kursor. <code>*teks*</code> = <b>tebal</b>, <code>_teks_</code> = <i>miring</i>. Arahkan kursor ke variabel untuk melihat artinya.</p>
+        <div class="chips" id="agTplVars"></div>
+        <div class="ag-row"><button id="agTplSample" type="button" class="btn">Isi contoh template</button></div>
+      </div>
+      <div class="ag-row">
+        <label>Pratinjau untuk grup <select id="agTplGroup"></select></label>
+        <button id="agTplPreview" type="button" class="btn">Lihat pratinjau</button>
+        <button id="agTplSave" type="button" class="btn primary">Simpan template</button>
+        <span id="agTplState" class="muted"></span>
+      </div>
+      <div id="agTplPreviewBox" class="ag-bubble" hidden></div>
+    </section>
 
     <section class="card" style="--card-c: var(--s5)">
       <div class="card-head"><h2>Pratinjau &amp; Kirim Manual</h2></div>

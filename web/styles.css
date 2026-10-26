@@ -240,3 +240,9 @@ td.ag-preview { white-space: pre-wrap; min-width: 280px; max-width: 520px; font-
 .ag-plink.done { border-color: color-mix(in srgb, var(--good) 50%, var(--border)); background: color-mix(in srgb, var(--good) 7%, var(--surface)); }
 
 .ag-title { font-weight: 600; min-width: 180px; }
+
+.ag-modes { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 8px; margin-bottom: 12px; }
+.ag-mode { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; cursor: pointer; }
+.ag-mode:has(input:checked) { border-color: var(--s3); background: color-mix(in srgb, var(--s3) 8%, var(--surface)); }
+.ag-mode input { margin-top: 3px; }
+.ag-bubble { white-space: pre-wrap; max-width: 380px; padding: 10px 12px; border-radius: 12px 12px 12px 4px; background: color-mix(in srgb, var(--s1) 10%, var(--surface)); border: 1px solid var(--border); font-size: 14px; line-height: 1.45; }

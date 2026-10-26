@@ -25,6 +25,7 @@ const DEFAULT_STATE = {
   community: null, // { title, filterId, inviteUrl, groupCount }
   schedule: { enabled: false, slots: [...SLOTS] },
   instructions: '',
+  messageTemplate: { mode: 'auto', text: '' }, // mode 'auto' (template bervariasi / Claude) atau 'custom'
   history: [], // { at, chatId, title, trigger, ok, error, preview }
   lastSlot: '',
 };
@@ -399,14 +400,17 @@ function platformBlock(p, nowHour, cutoff) {
   return lines;
 }
 
+// Template otomatis: sapaan (berganti-ganti) + isi + penyemangat
 function templateMessage(group, facts) {
-  const now = new Date(Date.parse(facts.waktu.replace(' ', 'T').replace(' WIB', ':00Z')));
-  const cutoff = facts.waktu.slice(11, 16).replace(':', '.');
-  const nowHour = Number(facts.waktu.slice(11, 13));
-  const tanggal = `${HARI[now.getUTCDay()]}, ${now.getUTCDate()} ${BULAN[now.getUTCMonth()]}`;
+  const v = messageVars(group, facts);
+  return [v.sapaan, '', ...templateBody(group, facts), '', v.semangat].join('\n');
+}
+
+function templateBody(group, facts) {
+  const { cutoff, nowHour, tanggal } = timeParts(facts);
   const ps = facts.per_platform;
   if (ps.length === 1) {
-    return [`📊 <b>Update Sales ${esc(ps[0].platform)}</b>`, `${tanggal} • ${cutoff} WIB`, '', ...platformBlock(ps[0], nowHour, cutoff)].join('\n');
+    return [`📊 <b>Update Sales ${esc(ps[0].platform)}</b>`, `${tanggal} • ${cutoff} WIB`, '', ...platformBlock(ps[0], nowHour, cutoff)];
   }
   // banyak platform: ringkasan total + satu baris per platform
   const t = facts.total.hari_ini;
@@ -431,10 +435,163 @@ function templateMessage(group, facts) {
   if (drops[0] && drops[0].ch < -0.2) pr.push(`Cek <b>${esc(drops[0].p.platform)}</b>${SUB}turun ${fmtPct(drops[0].ch * 100)} vs kemarin jam sama`);
   if (leads) pr.push(`Follow-up <b>${leads} calon pembeli</b>${SUB}potensi ${rupiah(pot)}${SUB}→ Dashsan › Daftar Follow-up`);
   if (pr.length) lines.push('', '<b>Prioritas</b>', ...pr.map((x, i) => `${i + 1}. ${x}`));
-  return lines.join('\n');
+  return lines;
 }
 
-async function writeMessage(group, facts, instructions) {
+// ---------- variasi kalimat ----------
+// Pilihan kalimat berganti tiap jadwal (berdasarkan tanggal & jam), tapi sama untuk pratinjau dan kiriman di jam yang sama.
+function pick(list, seed) {
+  return list[Math.abs(seed) % list.length];
+}
+function seedOf(facts, extra = '') {
+  const key = facts.waktu.slice(0, 13) + extra;
+  let h = 0;
+  for (const c of key) h = (h * 31 + c.charCodeAt(0)) | 0;
+  return h;
+}
+function greeting(nowHour, name, seed) {
+  const waktu = nowHour < 11 ? 'pagi' : nowHour < 15 ? 'siang' : nowHour < 18 ? 'sore' : 'malam';
+  const emoji = { pagi: '☀️', siang: '🌤', sore: '🌇', malam: '🌙' }[waktu];
+  return pick([
+    `Selamat ${waktu}, tim ${name}! ${emoji}`,
+    `Halo tim ${name}, selamat ${waktu} ${emoji}`,
+    `Hai tim ${name}! Update ${waktu} ini ${emoji}`,
+    `Selamat ${waktu} ${emoji} Ini kabar terbaru ${name}`,
+  ], seed);
+}
+function motivation(pace, vsYesterday, seed) {
+  if (pace != null && pace >= 110) return pick(['Mantap, di atas rata-rata! 🔥 Pertahankan ritmenya.', 'Lagi bagus banget hari ini 🚀 Lanjutkan!', 'Performa di atas biasanya 💪 Jaga terus responsnya.'], seed);
+  if (pace != null && pace < 80) return pick(['Masih ada waktu kejar ketertinggalan 💪 Fokus ke follow-up dulu.', 'Yuk dorong lagi 🙌 Satu follow-up bisa jadi satu closing.', 'Belum maksimal, tapi masih bisa dikejar 🎯 Semangat!'], seed);
+  if (vsYesterday != null && vsYesterday < 0) return pick(['Sedikit di bawah kemarin — yuk balas chat lebih cepat 🙌', 'Ayo kejar angka kemarin 💪 Mulai dari calon pembeli yang pending.'], seed);
+  return pick(['Terus jaga respons cepat ke customer 🙌', 'Kerja bagus, tim! Tetap semangat 💪', 'Konsisten itu kunci 🔑 Lanjutkan!'], seed);
+}
+
+// ---------- variabel untuk template custom ----------
+// Variabel ditulis [nama_variabel]. *teks* = tebal, _teks_ = miring.
+export const MESSAGE_VARS = [
+  ['sapaan', 'Salam pembuka yang berganti-ganti sesuai jam'],
+  ['platform', 'Nama platform (atau "Semua platform")'],
+  ['grup', 'Nama grup Telegram'],
+  ['tanggal', 'Hari & tanggal, mis. Senin, 26 Okt'],
+  ['jam', 'Jam data, mis. 12.00'],
+  ['omzet', 'Omzet hari ini s/d sekarang'],
+  ['vs_kemarin', '▲/▼ % omzet vs kemarin jam sama'],
+  ['vs_minggu_lalu', '▲/▼ % omzet vs minggu lalu hari & jam sama'],
+  ['omzet_kemarin_jam_sama', 'Omzet kemarin sampai jam yang sama'],
+  ['omzet_kemarin', 'Omzet kemarin satu hari penuh'],
+  ['sukses', 'Jumlah transaksi sukses hari ini'],
+  ['checkout', 'Jumlah checkout hari ini'],
+  ['conversion', 'Persen checkout yang jadi bayar'],
+  ['pace', 'Omzet hari ini vs rata-rata 7 hari di jam yang sama'],
+  ['gagal', 'Transaksi gagal hari ini'],
+  ['expired', 'Transaksi expired hari ini'],
+  ['pending', 'Transaksi pending hari ini'],
+  ['calon_pembeli', 'Orang yang checkout tapi belum bayar'],
+  ['potensi', 'Potensi omzet dari calon pembeli'],
+  ['produk_terlaris', 'Produk dengan omzet terbesar hari ini'],
+  ['promo_terlaris', 'Kode promo paling banyak dipakai'],
+  ['jam_ramai', 'Jam ramai berikutnya (dari 7 hari terakhir)'],
+  ['prioritas', 'Daftar tugas CS bernomor (beberapa baris)'],
+  ['produk_laku', 'Daftar produk terlaris (beberapa baris)'],
+  ['per_platform', 'Omzet per platform (untuk grup semua platform)'],
+  ['semangat', 'Kalimat penyemangat sesuai performa'],
+  ['ringkasan', 'Isi template otomatis lengkap'],
+];
+
+export const DEFAULT_CUSTOM_TEMPLATE = `[sapaan]
+
+📊 *Update [platform]*
+[tanggal] • [jam] WIB
+
+💰 Omzet: *[omzet]*
+    [vs_kemarin] vs kemarin
+✅ [sukses] sukses dari [checkout] checkout ([conversion])
+🎯 Pace: [pace]
+
+*Prioritas CS sekarang*
+[prioritas]
+
+[semangat]`;
+
+function timeParts(facts) {
+  const now = new Date(Date.parse(facts.waktu.replace(' ', 'T').replace(' WIB', ':00Z')));
+  return {
+    cutoff: facts.waktu.slice(11, 16).replace(':', '.'),
+    nowHour: Number(facts.waktu.slice(11, 13)),
+    tanggal: `${HARI[now.getUTCDay()]}, ${now.getUTCDate()} ${BULAN[now.getUTCMonth()]}`,
+  };
+}
+
+function messageVars(group, facts) {
+  const { cutoff, nowHour, tanggal } = timeParts(facts);
+  const ps = facts.per_platform;
+  const one = ps.length === 1 ? ps[0] : null;
+  const sum = (f) => ps.reduce((a, p) => a + f(p), 0);
+  const h = one ? one.hari_ini : facts.total.hari_ini;
+  const omzetK = one ? one.kemarin_jam_sama.omzet : facts.total.kemarin_jam_sama.omzet;
+  const omzetW = sum((p) => p.minggu_lalu_hari_sama_jam_sama.omzet);
+  const avg = sum((p) => p.rata2_7_hari_jam_sama.omzet);
+  const pace = avg ? Math.round((h.omzet / avg) * 100) : null;
+  const vsK = omzetK ? ((h.omzet - omzetK) / omzetK) * 100 : null;
+  const tops = ps.flatMap((p) => p.produk_teratas_hari_ini.filter((x) => x.sukses)).sort((a, b) => b.omzet - a.omzet);
+  const promos = ps.flatMap((p) => p.promo_teratas_hari_ini.filter((x) => x.sukses)).sort((a, b) => b.sukses - a.sukses);
+  const peaks = one ? one.jam_ramai_7_hari.filter((x) => x > nowHour) : [];
+  const name = one ? one.platform : 'Semua platform';
+  const seed = seedOf(facts, group.chatId);
+  const list = (items) => (items.length ? items.map((x, i) => `${i + 1}. ${x}`).join('\n') : '—');
+  const prior = one ? priorities(one, nowHour) : (() => {
+    const leads = sum((p) => p.calon_pembeli_belum_bayar_hari_ini.jumlah_orang);
+    return leads ? [`Follow-up <b>${leads} calon pembeli</b>${SUB}potensi ${rupiah(sum((p) => p.calon_pembeli_belum_bayar_hari_ini.potensi_omzet))}${SUB}→ Dashsan › Daftar Follow-up`] : [];
+  })();
+  const perPlatform = [...ps].sort((a, b) => b.hari_ini.omzet - a.hari_ini.omzet)
+    .map((p) => `• <b>${esc(p.platform)}</b> ${rupiah(p.hari_ini.omzet)}${change(p.hari_ini.omzet, p.kemarin_jam_sama.omzet) ? ` ${change(p.hari_ini.omzet, p.kemarin_jam_sama.omzet)}` : ''}`).join('\n');
+  return {
+    sapaan: greeting(nowHour, one ? name : 'semua', seed),
+    platform: name,
+    grup: group.title,
+    tanggal,
+    jam: cutoff,
+    omzet: rupiah(h.omzet),
+    vs_kemarin: change(h.omzet, omzetK) || '–',
+    vs_minggu_lalu: change(h.omzet, omzetW) || '–',
+    omzet_kemarin_jam_sama: rupiah(omzetK),
+    omzet_kemarin: rupiah(sum((p) => p.kemarin_full.omzet)),
+    sukses: String(h.sukses),
+    checkout: String(h.checkout),
+    conversion: h.conversion_pct == null ? '–' : fmtPct(h.conversion_pct),
+    pace: pace == null ? '–' : `${pace}%`,
+    gagal: String(h.gagal),
+    expired: String(h.expired),
+    pending: String(h.pending),
+    calon_pembeli: String(sum((p) => p.calon_pembeli_belum_bayar_hari_ini.jumlah_orang)),
+    potensi: rupiah(sum((p) => p.calon_pembeli_belum_bayar_hari_ini.potensi_omzet)),
+    produk_terlaris: tops[0] ? shortProduct(tops[0].nama) : '–',
+    promo_terlaris: promos[0]?.nama || '–',
+    jam_ramai: peaks.length ? peaks.map(jam).join(', ') : '–',
+    prioritas: list(prior),
+    produk_laku: tops.slice(0, 3).map((x) => `🏆 ${esc(shortProduct(x.nama))}${SUB}${x.sukses} trx • ${rupiah(x.omzet)}`).join('\n') || '—',
+    per_platform: perPlatform,
+    semangat: motivation(pace, vsK, seed),
+    ringkasan: templateBody(group, facts).join('\n'),
+  };
+}
+
+// *tebal* dan _miring_ → tag Telegram; variabel tak dikenal dibiarkan apa adanya
+function fillCustomTemplate(text, group, facts) {
+  const vars = messageVars(group, facts);
+  return String(text)
+    .replace(/\[([a-z_]+)\]/gi, (m, k) => (k.toLowerCase() in vars ? vars[k.toLowerCase()] : m))
+    .replace(/(^|[\s(])\*([^*\n]+)\*(?=$|[\s).,!?:;])/g, '$1<b>$2</b>')
+    .replace(/(^|[\s(])_([^_\n]+)_(?=$|[\s).,!?:;])/g, '$1<i>$2</i>');
+}
+
+async function writeMessage(group, facts, state, override) {
+  const tpl = override || state.messageTemplate || { mode: 'auto' };
+  if (tpl.mode === 'custom' && String(tpl.text || '').trim()) return { text: fillCustomTemplate(tpl.text, group, facts), writer: 'template custom' };
+  return writeAutoMessage(group, facts, state.instructions);
+}
+
+async function writeAutoMessage(group, facts, instructions) {
   if (!process.env.ANTHROPIC_API_KEY) return { text: templateMessage(group, facts), writer: 'template' };
   const client = new Anthropic();
   const userContent = [
@@ -497,7 +654,7 @@ async function runGroups(deps, state, groups, trigger) {
   for (let i = 0; i < groups.length; i += 3) {
     const batch = await Promise.allSettled(groups.slice(i, i + 3).map(async (g) => {
       const facts = await buildFacts(deps, g.platforms);
-      return { group: g, ...(await writeMessage(g, facts, state.instructions)) };
+      return { group: g, ...(await writeMessage(g, facts, state)) };
     }));
     batch.forEach((r, j) => (r.status === 'fulfilled' ? written.push(r.value) : failed.push({ group: groups[i + j], ok: false, error: r.reason?.message || String(r.reason) })));
   }
@@ -641,7 +798,7 @@ export function createAgentApi(deps) {
 
       if (req.method === 'GET' && route === 'state') {
         const [state, st] = await Promise.all([loadState(root), status()]);
-        return sendJson(res, 200, { status: true, state: publicState(state), info: st, platforms: deps.PLATFORMS });
+        return sendJson(res, 200, { status: true, state: publicState(state), info: st, platforms: deps.PLATFORMS, messageVars: MESSAGE_VARS, defaultCustomTemplate: DEFAULT_CUSTOM_TEMPLATE });
       }
 
       if (req.method !== 'POST') return sendJson(res, 405, { status: false, message: 'Method tidak diizinkan' });
@@ -729,6 +886,9 @@ export function createAgentApi(deps) {
           if (Array.isArray(body.schedule.slots)) state.schedule.slots = body.schedule.slots.map(Number).filter((s) => SLOTS.includes(s));
         }
         if (typeof body.instructions === 'string') state.instructions = body.instructions.slice(0, 2000);
+        if (body.messageTemplate && ['auto', 'custom'].includes(body.messageTemplate.mode)) {
+          state.messageTemplate = { mode: body.messageTemplate.mode, text: String(body.messageTemplate.text || '').slice(0, 4000) };
+        }
         const names = Object.fromEntries(deps.PLATFORMS.map((p) => [p.slug, p.name]));
         for (const [g, slug] of toPrepare) {
           const wasEnabled = g.enabled;
@@ -759,7 +919,9 @@ export function createAgentApi(deps) {
       if (route === 'preview') {
         const g = findGroup(state, body.chatId);
         const facts = await buildFacts(deps, g.platforms);
-        const { text, writer } = await writeMessage(g, facts, state.instructions);
+        const t = body.template;
+        const override = t && ['auto', 'custom'].includes(t.mode) ? { mode: t.mode, text: String(t.text || '').slice(0, 4000) } : null;
+        const { text, writer } = await writeMessage(g, facts, state, override);
         return sendJson(res, 200, { status: true, text, writer, facts });
       }
 
