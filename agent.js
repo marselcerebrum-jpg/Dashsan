@@ -112,6 +112,33 @@ async function sendTelegram(chatId, text) {
   }
 }
 
+// Siapkan grup bot untuk satu platform: tandai platform, aktifkan, lalu (bila bot admin) beri deskripsi,
+// link undangan, dan — untuk grup dari tombol platform — nama standar "<awalan> <Platform>".
+async function prepareBotGroup(g, slug, { names, prefix = 'CS', rename = false, isAdmin } = {}) {
+  g.platforms = [slug];
+  g.communityPlatform = slug;
+  g.via = 'bot';
+  g.enabled = true;
+  const notes = [];
+  let admin = isAdmin;
+  if (admin === undefined) {
+    try { admin = (await tg('getChatMember', { chat_id: g.chatId, user_id: Number(TELEGRAM_TOKEN().split(':')[0]) })).status === 'administrator'; } catch { admin = false; }
+  }
+  if (admin) {
+    const title = `${prefix} ${names[slug]}`.trim();
+    if (rename && g.title !== title) {
+      try { await tg('setChatTitle', { chat_id: g.chatId, title }); g.title = title; } catch (err) { notes.push(`nama: ${err.message}`); }
+    }
+    try { await tg('setChatDescription', { chat_id: g.chatId, description: `Grup CS ${names[slug]} — update & rekomendasi sales otomatis dari Dashsan.` }); } catch { /* deskripsi sama/tidak diizinkan */ }
+    if (!g.inviteLink) {
+      try { g.inviteLink = (await tg('createChatInviteLink', { chat_id: g.chatId, name: 'Dashsan' })).invite_link; } catch (err) { notes.push(`link: ${err.message}`); }
+    }
+  } else {
+    notes.push('bot belum admin — nama grup & link undangan tidak bisa diatur otomatis');
+  }
+  g.setupNote = notes.join('; ') || null;
+}
+
 // Grup terdeteksi dari update Telegram (bot dimasukkan/dikeluarkan dari grup, pesan di grup).
 // getUpdates hanya menyimpan update ±24 jam terakhir.
 // Link "tambahkan ke grup" dari Dashsan (t.me/<bot>?startgroup=<slug>) membuat Telegram mengirim
@@ -164,33 +191,11 @@ async function detectGroups(state, { names = {}, prefix = 'CS' } = {}) {
   }
 
   // grup dari link platform: atur platform, aktifkan, rapikan nama & buat link undangan (kalau bot admin)
-  const botId = Number(TELEGRAM_TOKEN().split(':')[0]);
   const prepared = [];
   for (const [chatId, slug] of claims) {
     const g = state.groups.find((x) => x.chatId === chatId);
     if (!g || g.removed) continue;
-    g.platforms = [slug];
-    g.communityPlatform = slug;
-    g.via = 'bot';
-    g.enabled = true;
-    const notes = [];
-    let admin = found.get(chatId)?.isAdmin;
-    if (admin === undefined) {
-      try { admin = (await tg('getChatMember', { chat_id: chatId, user_id: botId })).status === 'administrator'; } catch { admin = false; }
-    }
-    if (admin) {
-      const title = `${prefix} ${names[slug]}`.trim();
-      try {
-        if (g.title !== title) { await tg('setChatTitle', { chat_id: chatId, title }); g.title = title; }
-      } catch (err) { notes.push(`nama: ${err.message}`); }
-      try { await tg('setChatDescription', { chat_id: chatId, description: `Grup CS ${names[slug]} — update & rekomendasi sales otomatis dari Dashsan.` }); } catch { /* deskripsi sama/tidak diizinkan */ }
-      if (!g.inviteLink) {
-        try { g.inviteLink = (await tg('createChatInviteLink', { chat_id: chatId, name: 'Dashsan' })).invite_link; } catch (err) { notes.push(`link: ${err.message}`); }
-      }
-    } else {
-      notes.push('bot belum admin — nama grup & link undangan tidak bisa diatur otomatis');
-    }
-    g.setupNote = notes.join('; ') || null;
+    await prepareBotGroup(g, slug, { names, prefix, rename: true, isAdmin: found.get(chatId)?.isAdmin });
     prepared.push({ title: g.title, platform: names[slug], note: g.setupNote });
   }
 
@@ -612,10 +617,16 @@ export function createAgentApi(deps) {
 
       if (route === 'settings') {
         const valid = new Set(['all', ...deps.PLATFORMS.map((p) => p.slug)]);
+        const toPrepare = [];
         for (const upd of Array.isArray(body.groups) ? body.groups : []) {
           const g = state.groups.find((x) => x.chatId === String(upd.chatId));
           if (!g) continue;
-          if (Array.isArray(upd.platforms)) g.platforms = upd.platforms.filter((p) => valid.has(p));
+          if (Array.isArray(upd.platforms)) {
+            g.platforms = upd.platforms.filter((p) => valid.has(p));
+            const one = g.platforms.length === 1 && g.platforms[0] !== 'all' ? g.platforms[0] : null;
+            if (g.via !== 'account' && TELEGRAM_TOKEN() && one && g.communityPlatform !== one && !g.removed) toPrepare.push([g, one]);
+            if (!one && g.via !== 'account') g.communityPlatform = null;
+          }
           if (typeof upd.enabled === 'boolean') g.enabled = upd.enabled;
           if (upd.delete === true) state.groups = state.groups.filter((x) => x !== g);
         }
@@ -624,6 +635,12 @@ export function createAgentApi(deps) {
           if (Array.isArray(body.schedule.slots)) state.schedule.slots = body.schedule.slots.map(Number).filter((s) => SLOTS.includes(s));
         }
         if (typeof body.instructions === 'string') state.instructions = body.instructions.slice(0, 2000);
+        const names = Object.fromEntries(deps.PLATFORMS.map((p) => [p.slug, p.name]));
+        for (const [g, slug] of toPrepare) {
+          const wasEnabled = g.enabled;
+          await prepareBotGroup(g, slug, { names, rename: false });
+          g.enabled = wasEnabled; // pilihan Aktif dari form tetap dihormati
+        }
         await saveState(root, state);
         return sendJson(res, 200, { status: true, state: publicState(state) });
       }
