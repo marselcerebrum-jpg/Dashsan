@@ -247,7 +247,16 @@ Remove-Item Env:DEMO
 | `TELEGRAM_API_ID`, `TELEGRAM_API_HASH` | Opsional untuk jalur akun; juga tersedia pengaturan terenkripsi melalui UI |
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` | Opsional dan berbayar; bukan syarat mode template gratis |
 
-Hosting saat ini memakai Vercel tanpa build frontend, default handler `server.js`, dan `maxDuration` sesuai `vercel.json`. Perubahan env hosting memerlukan deployment ulang. Jangan deploy atau push hanya karena pengujian lokal lulus; ikuti permintaan pengguna dan ingat push ke branch produksi dapat memicu deploy otomatis.
+Hosting saat ini memakai Vercel tanpa build frontend, default handler `server.js`, dan `maxDuration` sesuai `vercel.json`. Perubahan env hosting memerlukan deployment ulang. Push ke branch produksi dapat memicu deploy otomatis; ikuti izin kerja menyeluruh di bawah.
+
+### Izin kerja sampai tayang
+
+- Pengguna menginginkan eksekusi langsung, bukan hanya daftar langkah atau tawaran melanjutkan. Permintaan memperbarui web mencakup implementasi, pengujian yang relevan, commit, push ke GitHub, dan verifikasi deployment sampai hasilnya tayang.
+- Permintaan deploy berarti jalankan deployment dan periksa hasilnya. Jangan meminta konfirmasi ulang untuk commit, push, atau deploy yang sudah tercakup dalam permintaan ini.
+- Gunakan alur repository yang benar-benar tersedia. Buat dan kelola PR bila alur branch memerlukannya; bila integrasi yang ada langsung men-deploy branch produksi, gunakan alur tersebut tanpa membuat PR atau branch tambahan yang tidak dibutuhkan.
+- Periksa branch tujuan, status remote, dan perubahan yang akan dikirim sebelum push. Jangan force-push atau menimpa pekerjaan orang lain. Izin ini tidak mencakup pengiriman Telegram, perubahan secret, akses/security, atau tindakan destruktif di luar kebutuhan tugas.
+- Setelah push, verifikasi commit remote dan status deployment. Bedakan deployment berhasil dari pengujian fungsi di halaman yang memerlukan login. Laporkan hambatan akses atau kegagalan secara konkret; jangan menyatakan berhasil hanya karena push selesai.
+- Pertanyaan penjelasan tetap dijawab sesuai konteks; jangan mengubah kode atau men-deploy hanya karena pengguna menanyakan cara kerja sesuatu.
 
 ## Alur kerja agent dan verifikasi
 
@@ -275,4 +284,4 @@ node --check web/agent-ui.js
 
 Pilih kasus uji sesuai perubahan: closing lintas hari/bulan, tahun kabisat, transaksi duplikat, orang membeli setelah periode filter, identitas lintas platform, pembanding gagal dimuat, diskon plus biaya admin, template All/per platform yang terpisah, target nol/tercapai, data historis parsial, autentikasi, atau cron berulang. Gunakan fixture sintetis, bukan data pribadi customer.
 
-Gunakan commit yang jelas jika diminta. Jangan mengubah file lain, dependency, konfigurasi global, secret, atau data produksi di luar kebutuhan tugas.
+Gunakan commit yang jelas dalam alur implementasi sampai tayang di atas. Jangan mengubah file lain, dependency, konfigurasi global, secret, atau data produksi di luar kebutuhan tugas.
