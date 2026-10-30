@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createAgentApi } from './agent.js';
+import { createDownloaderService, requestDailyDownloader } from './downloader.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -66,6 +67,11 @@ const toDate = (s) => new Date(`${s}T00:00:00Z`);
 const fmt = (d) => d.toISOString().slice(0, 10);
 const addDays = (d, n) => new Date(d.getTime() + n * 86400000);
 const todayStr = () => fmt(new Date(Date.now() + 7 * 3600000)); // WIB
+
+const downloaders = createDownloaderService({
+  platforms: PLATFORMS, today: todayStr, demo: DEMO,
+  requestDaily: (platform, date) => requestDailyDownloader({ baseUrl: API_BASE_URL, apiKey: API_KEY, authMode, platform, date }),
+});
 
 function splitRange(start, end) {
   const chunks = [];
@@ -300,6 +306,18 @@ function sendJson(res, code, obj) {
 async function handleApi(req, res, url) {
   if (url.pathname === '/api/config') {
     return sendJson(res, 200, { demo: DEMO, defaultPlatform: DEFAULT_PLATFORM, platforms: PLATFORMS, today: todayStr() });
+  }
+  if (url.pathname === '/api/downloaders') {
+    const platform = (url.searchParams.get('platform') || DEFAULT_PLATFORM).trim();
+    const start = url.searchParams.get('start_date') || url.searchParams.get('date') || '';
+    const end = url.searchParams.get('end_date') || start;
+    try {
+      const result = await downloaders.getRange(platform, start, end);
+      return sendJson(res, 200, { status: true, demo: DEMO, fetched_at: new Date().toISOString(), ...result });
+    } catch (err) {
+      const code = [400, 401, 403].includes(err.code) ? err.code : 502;
+      return sendJson(res, code, { status: false, message: code === 502 ? 'Data downloader belum dapat dimuat. Silakan coba lagi.' : err.message, data: null });
+    }
   }
   if (url.pathname !== '/api/transactions') return sendJson(res, 404, { status: false, message: 'Not found' });
 

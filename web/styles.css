@@ -114,10 +114,19 @@ main { padding: 16px 24px 48px; display: flex; flex-direction: column; gap: 16px
 .card h2::before { content: ""; width: 4px; height: 16px; border-radius: 2px; background: var(--card-c, var(--s1)); flex: none; }
 .card-head { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: baseline; justify-content: space-between; margin-bottom: 12px; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+#platformCard .actions { max-width: 100%; }
+#platformMetricMode { min-width: 0; max-width: 100%; }
 .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 @media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
 
 .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; }
+.kpi-group { display: contents; }
+.downloader-details { margin-top: 14px; }
+.downloader-details > summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+.downloader-details > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.downloader-details[open] > summary { margin-bottom: 12px; }
+.downloader-warning { margin: 8px 0 12px; }
+.downloader-table { max-height: 320px; overflow-y: auto; margin-top: 12px; }
 .kpi { --kc: var(--s1); position: relative; overflow: hidden; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 16px 14px; box-shadow: var(--shadow); }
 .kpi::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 4px; background: var(--kc); }
 .kpi::after { content: ""; position: absolute; inset: 0; background: linear-gradient(160deg, color-mix(in srgb, var(--kc) 9%, transparent), transparent 60%); pointer-events: none; }
@@ -127,6 +136,9 @@ main { padding: 16px 24px 48px; display: flex; flex-direction: column; gap: 16px
 .kpi:nth-child(4) { --kc: var(--s2); }
 .kpi:nth-child(5) { --kc: var(--s5); }
 .kpi:nth-child(6) { --kc: var(--s8); }
+#salesSecondaryKpis .kpi:nth-child(1) { --kc: var(--s2); }
+#salesSecondaryKpis .kpi:nth-child(2) { --kc: var(--s5); }
+#salesSecondaryKpis .kpi:nth-child(3) { --kc: var(--s8); }
 .kpi .label { display: flex; align-items: center; gap: 6px; }
 .kpi .label::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--kc); }
 .kpi .label { font-size: 12px; color: var(--muted); }

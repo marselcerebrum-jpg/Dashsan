@@ -1,4 +1,7 @@
 // Dashboard Sales — logika front-end (tanpa build step)
+import { createDownloaderPanel } from './downloaders.js';
+import { createConversionKpi } from './conversion.js';
+import { createPlatformDownloader, platformMetrics } from './platform-performance.js';
 
 const STATUS = ['Pending', 'Success', 'Expired', 'Canceled', 'Failed'];
 const DAYS = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
@@ -10,7 +13,7 @@ const TYPE_COLOR = { Perdana: '--s1', Perpanjangan: '--s2', Upgrade: '--s3' };
 const $ = (id) => document.getElementById(id);
 // URL absolut tanpa user:password — fetch() menolak URL relatif bila halaman dibuka lewat https://user:pass@host
 const apiUrl = (p) => new URL(p, location.origin);
-const state = { config: null, trx: [], prev: [], page: 0, leads: [], charts: {}, cmp: null, allPlatforms: false };
+const state = { config: null, trx: [], prev: [], page: 0, leads: [], charts: {}, cmp: null, allPlatforms: false, loadId: 0 };
 
 // ---------- format ----------
 const rupiah = (n) => 'Rp' + Math.round(n || 0).toLocaleString('id-ID');
@@ -187,10 +190,11 @@ function kpiCard(label, value, cur, prev, { invert = false, fmt } = {}) {
 }
 
 function renderKpis(s, p) {
-  $('kpis').innerHTML = [
+  $('salesKpis').innerHTML = [
     kpiCard('Omzet (sukses)', rupiahShort(s.revenue), s.revenue, p.revenue, { fmt: rupiahShort }),
     kpiCard('Transaksi sukses', num(s.success), s.success, p.success),
-    kpiCard('Conversion rate', pct(s.conversion), s.conversion, p.conversion, { fmt: pct }),
+  ].join('');
+  $('salesSecondaryKpis').innerHTML = [
     kpiCard('Rata-rata nilai order', rupiahShort(s.aov), s.aov, p.aov, { fmt: rupiahShort }),
     kpiCard('Customer unik (beli)', num(s.customers), s.customers, p.customers),
     kpiCard('Potensi omzet hilang', rupiahShort(s.lost), s.lost, p.lost, { invert: true, fmt: rupiahShort }),
@@ -399,7 +403,27 @@ function renderPlatforms(rows, prevRows, s) {
   $('platformCard').hidden = !state.allPlatforms;
   if (!state.allPlatforms) return;
   const prev = new Map(groupBy(prevRows, (t) => t.platform).map((g) => [g.key, g]));
-  const g = groupBy(rows, (t) => t.platform).sort((a, b) => b.revenue - a.revenue);
+  const conversion = $('platformMetricMode').value === 'conversion';
+  const downloader = platformDownloader.snapshot();
+  const byPlatform = new Map((downloader.data?.per_platform || []).map((row) => [row.platform, row]));
+  const groups = new Map(groupBy(rows, (t) => t.platform).map((g) => [g.key, g]));
+  if (conversion) for (const p of state.config.platforms) {
+    if (!groups.has(p.slug)) groups.set(p.slug, { key: p.slug, total: 0, success: 0, revenue: 0 });
+  }
+  const g = [...groups.values()].map((row) => ({ ...row, ...platformMetrics(row, conversion ? 'conversion' : 'purchase', byPlatform.get(row.key), state.salesComplete) })).sort((a, b) => b.revenue - a.revenue);
+  const formula = conversion ? 'Transaksi sukses ÷ downloader × 100%' : 'Transaksi sukses ÷ checkout × 100%';
+  let note = `${formula} • ${rangeLabel(state.range.start, state.range.end)}.`;
+  if (conversion) {
+    if (downloader.loading) note += ` Mengambil downloader: ${downloader.loadedDays} dari ${state.range.days} hari…`;
+    else if (downloader.error) note += ` ${downloader.error}`;
+    else if (!downloader.data?.per_platform?.length) note += 'Data downloader per platform belum tersedia.';
+    else if (downloader.data.warnings.length) note += 'Sebagian downloader belum lengkap; konversi platform terkait belum tersedia.';
+    if (downloader.data?.demo) note += ' Data downloader contoh.';
+  }
+  if (!state.salesComplete) note += 'Data transaksi belum lengkap; persentase belum tersedia.';
+  $('platformMetricNote').textContent = note;
+  $('reloadPlatformDownloaders').hidden = !conversion || !downloader.data && !downloader.error;
+  $('reloadPlatformDownloaders').disabled = downloader.loading;
   const max = Math.max(1, ...g.map((x) => x.revenue));
   $('platformCmpNote').textContent = `Pertumbuhan vs ${state.cmp.short} (${rangeLabel(state.cmp.start, state.cmp.end)})`;
   const growth = (cur, old) => {
@@ -409,9 +433,9 @@ function renderPlatforms(rows, prevRows, s) {
   };
   table('platformTable', [
     { label: 'Platform', render: (r) => `<b>${esc(platformName(r.key))}</b>` },
-    { label: 'Checkout', num: true, render: (r) => num(r.total) },
+    { label: conversion ? 'Download' : 'Checkout', num: true, render: (r) => r.denominator === null ? `<span class="muted" title="${downloader.loading ? 'Sedang memuat' : 'Data belum tersedia/lengkap'}">—</span>` : num(r.denominator) },
     { label: 'Sukses', num: true, render: (r) => num(r.success) },
-    { label: 'Conversion', num: true, render: (r) => pct(r.conversion) },
+    { label: 'Konversi', num: true, render: (r) => pct(r.conversion) },
     { label: 'Omzet', num: true, render: (r) => rupiah(r.revenue) },
     { label: `Omzet ${state.cmp.short}`, num: true, render: (r) => rupiah(prev.get(r.key)?.revenue || 0) },
     { label: 'Pertumbuhan', num: true, render: (r) => growth(r.revenue, prev.get(r.key)?.revenue) },
@@ -657,6 +681,12 @@ const TRX_COLS = [
 ];
 
 // ---------- load ----------
+const conversionKpi = createConversionKpi({ element: $('conversionKpi'), esc, num, pct, rangeLabel });
+const downloaderPanel = createDownloaderPanel({ chart, downloadCsv, dateLabel, rangeLabel, num, esc, apiUrl, onUpdate: conversionKpi.setDownloaders });
+const platformDownloader = createPlatformDownloader({ apiUrl, onUpdate: () => {
+  if (state.range) renderPlatforms(state.trx, state.prev, summarize(state.trx));
+} });
+
 async function fetchRange(platform, start, end, status = '') {
   const qs = new URLSearchParams({ platform, start_date: start, end_date: end });
   if (status !== '') qs.set('status', status);
@@ -676,6 +706,16 @@ async function load() {
   const days = daysBetween(start, end);
   const range = { start, end, days };
   const cmp = compareRange($('compare').value, start, end);
+  const requestId = ++state.loadId;
+  conversionKpi.begin(requestId);
+  platformDownloader.reset();
+  state.range = null;
+  $('platformCard').hidden = true;
+
+  void downloaderPanel.load({
+    requestId, platform, platformLabel: platformName(platform), range, compare: cmp,
+    platformNames: Object.fromEntries(state.config.platforms.map((p) => [p.slug, p.name])),
+  });
 
   $('loading').hidden = false;
   $('errorBanner').hidden = true;
@@ -683,12 +723,20 @@ async function load() {
     // transaksi sukses sesudah periode s/d hari ini, untuk mengecek apakah calon pembeli akhirnya jadi beli
     const today = state.config.today;
     const laterReq = end < today ? fetchRange(platform, addDays(end, 1), today, '1') : Promise.resolve({ data: [] });
-    const [cur, prev, later] = await Promise.all([fetchRange(platform, start, end), fetchRange(platform, cmp.start, cmp.end).catch(() => ({ data: [] })), laterReq]);
+    const [cur, prev, later] = await Promise.all([fetchRange(platform, start, end), fetchRange(platform, cmp.start, cmp.end).catch(() => ({ data: [], failed: true })), laterReq]);
+    if (requestId !== state.loadId) return;
     state.later = later.data.map(normalize);
     state.cmp = cmp;
     state.allPlatforms = platform === 'all';
     state.trx = cur.data.map(normalize);
     state.prev = prev.data.map(normalize);
+    state.range = range;
+    state.salesComplete = !cur.warnings?.length;
+    platformDownloader.setContext({ platform, range });
+    conversionKpi.setSales(requestId, {
+      rows: state.trx, previousRows: state.prev,
+      complete: !cur.warnings?.length, previousComplete: !prev.failed && !prev.warnings?.length,
+    });
     state.page = 0;
     $('demoBanner').hidden = !cur.demo;
     $('lastUpdated').textContent = `${platformName(platform)} • ${rangeLabel(start, end)} vs ${rangeLabel(cmp.start, cmp.end)} • diperbarui ${new Date(cur.fetched_at).toLocaleTimeString('id-ID')}`;
@@ -696,9 +744,11 @@ async function load() {
     saveFilters();
     render(range);
   } catch (err) {
+    if (requestId !== state.loadId) return;
+    conversionKpi.setSales(requestId, { rows: null, previousRows: null, complete: false, previousComplete: false });
     showError(err.message);
   } finally {
-    $('loading').hidden = true;
+    if (requestId === state.loadId) $('loading').hidden = true;
   }
 }
 
@@ -730,7 +780,7 @@ function showError(msg) {
 
 function saveFilters() {
   try {
-    localStorage.setItem('dashsan.filters', JSON.stringify({ platform: $('platform').value, compare: $('compare').value, preset: $('preset').value, start: $('startDate').value, end: $('endDate').value }));
+    localStorage.setItem('dashsan.filters', JSON.stringify({ platform: $('platform').value, compare: $('compare').value, preset: $('preset').value, start: $('startDate').value, end: $('endDate').value, platformMetricMode: $('platformMetricMode').value }));
   } catch { /* storage tidak tersedia */ }
 }
 function restoreFilters() {
@@ -739,6 +789,7 @@ function restoreFilters() {
     if (!f) return;
     if ([...$('platform').options].some((o) => o.value === f.platform)) $('platform').value = f.platform;
     if (['yoy', 'prev'].includes(f.compare)) $('compare').value = f.compare;
+    if (['purchase', 'conversion'].includes(f.platformMetricMode)) $('platformMetricMode').value = f.platformMetricMode;
     $('preset').value = f.preset || '30';
     $('startDate').value = f.start || '';
     $('endDate').value = f.end || '';
@@ -754,6 +805,12 @@ async function init() {
   $('endDate').value = state.config.today;
   $('startDate').value = addDays(state.config.today, -29);
   restoreFilters();
+  platformDownloader.setMode($('platformMetricMode').value);
+  $('platformMetricMode').addEventListener('change', () => {
+    platformDownloader.setMode($('platformMetricMode').value);
+    saveFilters();
+  });
+  $('reloadPlatformDownloaders').addEventListener('click', () => platformDownloader.retry());
   const syncCustom = () => $('filters').classList.toggle('custom', $('preset').value === 'custom');
   syncCustom();
 

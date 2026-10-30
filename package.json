@@ -9,6 +9,7 @@
   },
   "scripts": {
     "start": "node server.js",
+    "test": "node --test",
     "demo": "DEMO=1 node server.js"
   },
   "dependencies": {

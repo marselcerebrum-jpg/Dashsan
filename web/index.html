@@ -54,7 +54,34 @@
   <div id="errorBanner" class="banner error view-dashboard" hidden></div>
 
   <main id="main" class="view-dashboard">
-    <section class="kpis" id="kpis"></section>
+    <section class="card" id="salesSummaryCard" style="--card-c: var(--s1)" aria-labelledby="salesSummaryTitle">
+      <div class="card-head"><h2 id="salesSummaryTitle">Ringkasan Sales</h2></div>
+      <div class="kpis" id="kpis">
+        <div id="salesKpis" class="kpi-group"></div>
+        <div id="conversionKpi" class="kpi-group" aria-live="polite"></div>
+        <div id="salesSecondaryKpis" class="kpi-group"></div>
+        <div id="downloaderKpi" class="kpi-group" aria-live="polite"></div>
+      </div>
+      <details class="downloader-details">
+        <summary>Detail downloader</summary>
+        <div class="actions">
+          <label class="muted" for="downloaderMode">Tampilan</label>
+          <select id="downloaderMode">
+            <option value="daily" selected>Harian (tanggal akhir filter)</option>
+            <option value="range">Seluruh periode sales</option>
+          </select>
+          <button id="reloadDownloaders" type="button" class="btn">Muat ulang downloader</button>
+          <button id="exportDownloaders" type="button" class="btn" disabled>Export CSV</button>
+        </div>
+        <p id="downloaderRange" class="muted"></p>
+        <p class="muted">Jumlah downloader dari Markaz mengikuti filter platform dan tanggal. Semua platform = penjumlahan tiap platform; bukan jumlah pembeli atau pengguna unik lintas aplikasi.</p>
+        <p class="muted">Konversi = pembeli unik ÷ downloader × 100%, pada tanggal yang sama dengan kartu downloader. Konversi sekarang dibandingkan dengan tahun lalu atau periode sebelumnya sesuai filter. Ini rasio volume; pembeli dapat berasal dari downloader periode lain.</p>
+        <p id="downloaderStatus" class="muted" role="status" aria-live="polite">Pilih periode untuk melihat downloader.</p>
+        <div id="downloaderChartWrap" class="chart" hidden><canvas id="downloaderChart" aria-label="Tren downloader harian" role="img"></canvas></div>
+        <div class="table-wrap downloader-table"><table id="downloaderTable" aria-label="Data downloader per hari dan pembanding"></table></div>
+      </details>
+      <div id="downloaderWarning" class="banner error downloader-warning" role="status" hidden></div>
+    </section>
 
     <section class="card" style="--card-c: var(--s7)">
       <h2>Insight &amp; Rekomendasi Strategi</h2>
@@ -62,7 +89,19 @@
     </section>
 
     <section class="card" id="platformCard" style="--card-c: var(--s6)" hidden>
-      <div class="card-head"><h2>Performa per Platform</h2><span class="muted" id="platformCmpNote"></span></div>
+      <div class="card-head">
+        <h2>Performa per Platform</h2>
+        <div class="actions">
+          <label for="platformMetricMode">Berdasarkan</label>
+          <select id="platformMetricMode">
+            <option value="purchase">Pembeli (Checkout → Sukses)</option>
+            <option value="conversion">Konversi (Download → Sukses)</option>
+          </select>
+          <button id="reloadPlatformDownloaders" type="button" class="btn" hidden>Muat ulang downloader</button>
+        </div>
+        <span class="muted" id="platformCmpNote"></span>
+      </div>
+      <p class="muted" id="platformMetricNote" role="status" aria-live="polite"></p>
       <div class="table-wrap"><table id="platformTable"></table></div>
     </section>
 
