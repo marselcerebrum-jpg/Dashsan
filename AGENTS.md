@@ -249,9 +249,12 @@ Remove-Item Env:DEMO
 
 Hosting saat ini memakai Vercel tanpa build frontend, default handler `server.js`, dan `maxDuration` sesuai `vercel.json`. Perubahan env hosting memerlukan deployment ulang. Push ke branch produksi dapat memicu deploy otomatis; ikuti izin kerja menyeluruh di bawah.
 
-### Izin kerja sampai tayang
+### Izin kerja menyeluruh sampai selesai
 
-- Pengguna menginginkan eksekusi langsung, bukan hanya daftar langkah atau tawaran melanjutkan. Permintaan memperbarui web mencakup implementasi, pengujian yang relevan, commit, push ke GitHub, dan verifikasi deployment sampai hasilnya tayang.
+- Preferensi ini berlaku untuk semua jenis tugas, bukan hanya perubahan web: pengguna menginginkan eksekusi langsung sampai tujuan selesai dan hasil terverifikasi, bukan hanya daftar langkah, rencana, atau tawaran melanjutkan.
+- Permintaan tindakan mencakup langkah lanjutan yang diperlukan dalam lingkup tugas. Pilih cara pelaksanaan yang masuk akal dan lanjutkan tanpa menunggu instruksi terpisah untuk setiap langkah rutin.
+- Permintaan memperbarui web mencakup implementasi, pengujian yang relevan, commit, push ke GitHub, dan verifikasi deployment sampai hasilnya tayang. Terapkan prinsip penyelesaian menyeluruh yang sama pada dokumen, analisis, perbaikan, konfigurasi, dan tugas lain sesuai hasil yang diminta.
+- Bila informasi, akses, atau persetujuan tertentu benar-benar diperlukan, kerjakan dahulu bagian yang tidak bergantung padanya, lalu jelaskan kendala dan kebutuhan yang spesifik. Jangan meminta ulang izin yang sudah diberikan. Preferensi ini tidak memperluas tugas ke tindakan yang tidak diminta.
 - Permintaan deploy berarti jalankan deployment dan periksa hasilnya. Jangan meminta konfirmasi ulang untuk commit, push, atau deploy yang sudah tercakup dalam permintaan ini.
 - Gunakan alur repository yang benar-benar tersedia. Buat dan kelola PR bila alur branch memerlukannya; bila integrasi yang ada langsung men-deploy branch produksi, gunakan alur tersebut tanpa membuat PR atau branch tambahan yang tidak dibutuhkan.
 - Periksa branch tujuan, status remote, dan perubahan yang akan dikirim sebelum push. Jangan force-push atau menimpa pekerjaan orang lain. Izin ini tidak mencakup pengiriman Telegram, perubahan secret, akses/security, atau tindakan destruktif di luar kebutuhan tugas.
@@ -284,4 +287,4 @@ node --check web/agent-ui.js
 
 Pilih kasus uji sesuai perubahan: closing lintas hari/bulan, tahun kabisat, transaksi duplikat, orang membeli setelah periode filter, identitas lintas platform, pembanding gagal dimuat, diskon plus biaya admin, template All/per platform yang terpisah, target nol/tercapai, data historis parsial, autentikasi, atau cron berulang. Gunakan fixture sintetis, bukan data pribadi customer.
 
-Gunakan commit yang jelas dalam alur implementasi sampai tayang di atas. Jangan mengubah file lain, dependency, konfigurasi global, secret, atau data produksi di luar kebutuhan tugas.
+Gunakan commit yang jelas dalam alur penyelesaian menyeluruh di atas. Jangan mengubah file lain, dependency, konfigurasi global, secret, atau data produksi di luar kebutuhan tugas.
