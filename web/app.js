@@ -1,7 +1,7 @@
 // Dashboard Sales — logika front-end (tanpa build step)
 import { createDownloaderPanel } from './downloaders.js';
 import { createConversionKpi } from './conversion.js';
-import { createPlatformDownloader, platformMetrics } from './platform-performance.js';
+import { createPlatformDownloader, platformMetrics, incompletePlatformDownloaders } from './platform-performance.js';
 
 const STATUS = ['Pending', 'Success', 'Expired', 'Canceled', 'Failed'];
 const DAYS = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
@@ -422,6 +422,9 @@ function renderPlatforms(rows, prevRows, s) {
   }
   if (!state.salesComplete) note += 'Data transaksi belum lengkap; persentase belum tersedia.';
   $('platformMetricNote').textContent = note;
+  const incomplete = conversion ? incompletePlatformDownloaders(downloader.data) : [];
+  $('platformDownloaderIssues').hidden = !incomplete.length;
+  $('platformDownloaderIssueList').innerHTML = incomplete.map((row) => `<li><b>${esc(platformName(row.platform))}</b>: ${esc(num(row.known_total))} tercatat dari ${esc(num(row.complete_days))}/${esc(num(row.days))} hari. Belum dimuat: ${esc(row.missing_dates.map(dateLabel).join(', ') || 'rincian tanggal belum tersedia')}. Klik Muat ulang downloader untuk mencoba lagi.</li>`).join('');
   $('reloadPlatformDownloaders').hidden = !conversion || !downloader.data && !downloader.error;
   $('reloadPlatformDownloaders').disabled = downloader.loading;
   const max = Math.max(1, ...g.map((x) => x.revenue));
@@ -433,7 +436,12 @@ function renderPlatforms(rows, prevRows, s) {
   };
   table('platformTable', [
     { label: 'Platform', render: (r) => `<b>${esc(platformName(r.key))}</b>` },
-    { label: conversion ? 'Download' : 'Checkout', num: true, render: (r) => r.denominator === null ? `<span class="muted" title="${downloader.loading ? 'Sedang memuat' : 'Data belum tersedia/lengkap'}">—</span>` : num(r.denominator) },
+    { label: conversion ? 'Download' : 'Checkout', num: true, render: (r) => {
+      if (r.denominator !== null) return num(r.denominator);
+      const partial = byPlatform.get(r.key);
+      if (partial && !partial.complete) return `<span class="muted">Belum lengkap</span><div class="muted">${esc(num(partial.complete_days))}/${esc(num(partial.days))} hari</div>`;
+      return `<span class="muted">${downloader.loading ? 'Memuat…' : 'Belum tersedia'}</span>`;
+    } },
     { label: 'Sukses', num: true, render: (r) => num(r.success) },
     { label: 'Konversi', num: true, render: (r) => pct(r.conversion) },
     { label: 'Omzet', num: true, render: (r) => rupiah(r.revenue) },

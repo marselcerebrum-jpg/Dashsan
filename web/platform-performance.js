@@ -7,6 +7,13 @@ export function platformMetrics(group, mode, downloader, salesComplete = true) {
   return { denominator, conversion: salesComplete && denominator > 0 ? group.success / denominator : NaN };
 }
 
+export function incompletePlatformDownloaders(result) {
+  return (result?.per_platform || []).filter((row) => !row.complete).map((row) => ({
+    ...row,
+    missing_dates: (result.data || []).filter((day) => day.missing_platforms?.includes(row.platform)).map((day) => day.date),
+  }));
+}
+
 // The table always uses the entire applied sales range, independent of the daily KPI.
 export function createPlatformDownloader({ apiUrl, onUpdate, request = fetchDownloaderRange }) {
   let context;

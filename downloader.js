@@ -15,7 +15,7 @@ export function downloaderDates(start, end) {
   return Array.from({ length: days }, (_, i) => new Date(Date.parse(start) + i * DAY_MS).toISOString().slice(0, 10));
 }
 
-export async function requestDailyDownloader({ baseUrl, apiKey, authMode, platform, date, fetchImpl = fetch }) {
+export async function requestDailyDownloader({ baseUrl, apiKey, authMode, platform, date, fetchImpl = fetch, retryDelay = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) }) {
   const url = new URL(`${baseUrl}/api/user-daily`);
   url.searchParams.set('platform', platform);
   url.searchParams.set('date', date);
@@ -23,19 +23,26 @@ export async function requestDailyDownloader({ baseUrl, apiKey, authMode, platfo
   if (authMode.query) url.searchParams.set(authMode.query, apiKey);
   else headers[authMode.header] = apiKey;
 
-  let response;
-  try {
-    response = await fetchImpl(url, { headers, signal: AbortSignal.timeout(15000) });
-  } catch {
-    throw apiError('Tidak dapat terhubung ke API downloader Markaz.', 502);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    let response;
+    let body;
+    try {
+      response = await fetchImpl(url, { headers, signal: AbortSignal.timeout(attempt ? 30000 : 15000) });
+      body = await response.json();
+    } catch {
+      // A timeout can also happen while reading the response body.
+      if (!attempt && ![401, 403].includes(response?.status)) { await retryDelay(300); continue; }
+      if ([401, 403].includes(response?.status)) throw apiError('API key downloader Markaz ditolak. Periksa API_KEY di server.', 401);
+      throw apiError('Tidak dapat terhubung ke API downloader Markaz.', 502);
+    }
+    if ([401, 403].includes(response.status) || /api key/i.test(body?.message || '')) {
+      throw apiError('API key downloader Markaz ditolak. Periksa API_KEY di server.', 401);
+    }
+    if (!attempt && (response.status === 429 || response.status >= 500)) { await retryDelay(300); continue; }
+    if (!response.ok || body?.status !== true) throw apiError(`Data downloader tidak dapat diambil (HTTP ${response.status}).`, 502);
+    if (!Number.isSafeInteger(body.data?.total) || body.data.total < 0) throw apiError('Total downloader dari Markaz tidak valid.', 502);
+    return body.data.total;
   }
-  const body = await response.json().catch(() => null);
-  if ([401, 403].includes(response.status) || /api key/i.test(body?.message || '')) {
-    throw apiError('API key downloader Markaz ditolak. Periksa API_KEY di server.', 401);
-  }
-  if (!response.ok || body?.status !== true) throw apiError(`Data downloader tidak dapat diambil (HTTP ${response.status}).`, 502);
-  if (!Number.isSafeInteger(body.data?.total) || body.data.total < 0) throw apiError('Total downloader dari Markaz tidak valid.', 502);
-  return body.data.total;
 }
 
 export function createDownloaderService({ platforms, requestDaily, today, demo = false, now = Date.now, budgetMs = 210000 }) {

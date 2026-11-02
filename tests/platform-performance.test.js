@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createPlatformDownloader, platformMetrics } from '../web/platform-performance.js';
+import { createPlatformDownloader, platformMetrics, incompletePlatformDownloaders } from '../web/platform-performance.js';
 import { fetchDownloaderRange } from '../web/downloader-data.js';
 
 const range = { start: '2026-10-28', end: '2026-10-29', days: 2 };
@@ -23,6 +23,27 @@ test('unavailable, partial, and zero downloads never produce a misleading percen
   assert.equal(platformMetrics({ total: 10, success: 6 }, 'conversion', { complete: true, total: 0 }).denominator, 0);
   assert.equal(platformMetrics({ total: 10, success: 6 }, 'conversion', undefined).denominator, null);
   assert.ok(Number.isNaN(platformMetrics({ total: 10, success: 6 }, 'conversion', { complete: true, total: 20 }, false).conversion));
+});
+
+test('incomplete platform details identify the failed dates without hiding successful platforms', () => {
+  const result = {
+    per_platform: [
+      { platform: 'jadiasn', complete: true, total: 200, known_total: 200, days: 3, complete_days: 3 },
+      { platform: 'cerebrum', complete: false, total: null, known_total: 80, days: 3, complete_days: 2 },
+    ],
+    data: [
+      { date: '2026-10-28', missing_platforms: [] },
+      { date: '2026-10-29', missing_platforms: ['cerebrum'] },
+      { date: '2026-10-30', missing_platforms: [] },
+    ],
+  };
+  assert.deepEqual(incompletePlatformDownloaders(result), [
+    { ...result.per_platform[1], missing_dates: ['2026-10-29'] },
+  ]);
+  assert.deepEqual(incompletePlatformDownloaders(null), []);
+  assert.deepEqual(incompletePlatformDownloaders({ ...result, per_platform: result.per_platform.slice(0, 1) }), []);
+  assert.equal(platformMetrics({ total: 100, success: 10 }, 'conversion', result.per_platform[0]).conversion, 0.05);
+  assert.ok(Number.isNaN(platformMetrics({ total: 100, success: 10 }, 'conversion', result.per_platform[1]).conversion));
 });
 
 test('daily chunks preserve independent platform completeness across the full selected period', async () => {

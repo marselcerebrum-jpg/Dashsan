@@ -37,6 +37,64 @@ test('upstream authentication overrides remain supported', async () => {
   });
 });
 
+test('Cerebrum temporary failures are retried before marking a day missing', async () => {
+  const calls = new Map();
+  let active = 0;
+  let maximum = 0;
+  const api = service({ platforms: [...platforms, { slug: 'cerebrum', name: 'Cerebrum' }], requestDaily: (platform, date) => requestDailyDownloader({
+    baseUrl: 'https://markaz.example', apiKey: 'test-secret', authMode: { header: 'Authorization' }, platform, date,
+    retryDelay: async () => {},
+    fetchImpl: async (url) => {
+      const key = `${url.searchParams.get('platform')}|${url.searchParams.get('date')}`;
+      calls.set(key, (calls.get(key) || 0) + 1);
+      active++;
+      maximum = Math.max(maximum, active);
+      await new Promise((resolve) => setImmediate(resolve));
+      active--;
+      return key === 'cerebrum|2026-10-28' && calls.get(key) === 1
+        ? Response.json({ status: false }, { status: 503 })
+        : Response.json({ status: true, data: { total: 10 } });
+    },
+  }) });
+  const result = await api.getRange('all', '2026-10-28', '2026-10-29');
+  assert.equal(result.summary.complete, true);
+  assert.equal(result.summary.total, 60);
+  assert.equal(result.per_platform.find((row) => row.platform === 'cerebrum').total, 20);
+  assert.equal(calls.get('cerebrum|2026-10-28'), 2);
+  assert.ok(maximum <= 3, 'retries keep the shared concurrency limit');
+  await api.getRange('cerebrum', '2026-10-28', '2026-10-29');
+  assert.equal(calls.get('cerebrum|2026-10-28'), 2, 'recovered counts are cached normally');
+});
+
+test('network failures, response-body timeouts and rate limits get one bounded retry', async () => {
+  const options = { baseUrl: 'https://markaz.example', apiKey: 'test-secret', authMode: { header: 'Authorization' }, platform: 'cerebrum', date: '2026-10-28', retryDelay: async () => {} };
+  for (const first of [
+    () => { throw new Error('network interrupted'); },
+    () => ({ status: 200, json: async () => { throw new Error('body interrupted'); } }),
+    () => Response.json({ status: false }, { status: 429 }),
+  ]) {
+    let calls = 0;
+    const total = await requestDailyDownloader({ ...options, fetchImpl: async () => ++calls === 1 ? first() : Response.json({ status: true, data: { total: 0 } }) });
+    assert.equal(total, 0);
+    assert.equal(calls, 2);
+  }
+  let calls = 0;
+  await assert.rejects(requestDailyDownloader({ ...options, fetchImpl: async () => { calls++; return Response.json({ status: false }, { status: 500 }); } }), { code: 502 });
+  assert.equal(calls, 2, 'persistent failures stop after the second attempt');
+});
+
+test('authentication and invalid request failures do not trigger retries', async () => {
+  for (const status of [400, 401, 403]) {
+    let calls = 0;
+    await assert.rejects(requestDailyDownloader({
+      baseUrl: 'https://markaz.example', apiKey: 'test-secret', authMode: { header: 'Authorization' }, platform: 'cerebrum', date: '2026-10-28',
+      retryDelay: async () => { throw new Error('must not retry'); },
+      fetchImpl: async () => { calls++; return Response.json({ status: false }, { status }); },
+    }), { code: status === 400 ? 502 : 401 });
+    assert.equal(calls, 1);
+  }
+});
+
 test('invalid keys, malformed totals, non-JSON responses and network failures are not treated as zero', async () => {
   const options = { baseUrl: 'https://markaz.example', apiKey: 'test-secret', authMode: { header: 'Authorization' }, platform: 'jadiasn', date: '2026-10-29' };
   await assert.rejects(requestDailyDownloader({ ...options, fetchImpl: async () => Response.json({ status: false, message: 'Invalid API Key' }, { status: 401 }) }), { code: 401 });
