@@ -126,9 +126,10 @@ test('a zero comparison rate does not render infinity or fabricate percentage gr
   assert.doesNotMatch(element.innerHTML, /Infinity|NaN|▲/);
 });
 
-test('Konversi compares the current rate against the selected year or previous period', () => {
+test('Konversi follows the selected year, month, or previous-period comparison', () => {
   for (const compare of [
     { mode: 'yoy', start: '2025-10-28', end: '2025-10-29', short: 'tahun lalu' },
+    { mode: 'mom', start: '2026-09-28', end: '2026-09-29', short: 'bulan lalu' },
     { mode: 'prev', start: '2026-10-26', end: '2026-10-27', short: '2 hari sebelumnya' },
   ]) {
     const { kpi, element } = setup();

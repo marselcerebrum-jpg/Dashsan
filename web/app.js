@@ -2,6 +2,7 @@
 import { createDownloaderPanel } from './downloaders.js';
 import { createConversionKpi } from './conversion.js';
 import { createPlatformDownloader, platformMetrics, incompletePlatformDownloaders } from './platform-performance.js';
+import { compareRange } from './comparison.js';
 
 const STATUS = ['Pending', 'Success', 'Expired', 'Canceled', 'Failed'];
 const DAYS = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
@@ -35,20 +36,6 @@ const addDays = (s, n) => fmtDate(new Date(toDate(s).getTime() + n * 86400000));
 const daysBetween = (a, b) => Math.round((toDate(b) - toDate(a)) / 86400000) + 1;
 const dateLabel = (s) => toDate(s).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', timeZone: 'UTC' });
 
-// Periode pembanding: periode sama tahun lalu (default) atau N hari tepat sebelumnya
-function shiftYear(s, n) {
-  const [y, m, d] = s.split('-').map(Number);
-  const last = new Date(Date.UTC(y + n, m, 0)).getUTCDate(); // 29 Feb → 28 Feb
-  return fmtDate(new Date(Date.UTC(y + n, m - 1, Math.min(d, last))));
-}
-function compareRange(mode, start, end) {
-  const days = daysBetween(start, end);
-  if (mode === 'prev') {
-    const e = addDays(start, -1);
-    return { mode, start: addDays(e, -(days - 1)), end: e, short: `${days} hari sebelumnya`, series: 'Omzet periode sebelumnya' };
-  }
-  return { mode, start: shiftYear(start, -1), end: shiftYear(end, -1), short: 'tahun lalu', series: 'Omzet tahun lalu' };
-}
 const rangeLabel = (a, b) => (a === b ? `${dateLabel(a)} ${a.slice(0, 4)}` : `${dateLabel(a)} – ${dateLabel(b)} ${b.slice(0, 4)}`);
 const platformName = (slug) => (slug === 'all' ? 'Semua platform' : state.config?.platforms?.find((p) => p.slug === slug)?.name || slug);
 
@@ -210,7 +197,7 @@ function renderInsights(rows, s, p, range) {
   }
   if (p.revenue > 0) {
     const ch = (s.revenue - p.revenue) / p.revenue;
-    out.push(`Omzet <b>${ch >= 0 ? 'naik' : 'turun'} ${pct(Math.abs(ch))}</b> dibanding ${state.cmp.mode === 'yoy' ? 'periode sama tahun lalu' : `${range.days} hari sebelumnya`} (${rangeLabel(state.cmp.start, state.cmp.end)}: ${rupiahShort(p.revenue)} → ${rupiahShort(s.revenue)}).${ch < 0 ? ' Cek apakah traffic (jumlah checkout) yang turun atau conversion-nya.' : ''}`);
+    out.push(`Omzet <b>${ch >= 0 ? 'naik' : 'turun'} ${pct(Math.abs(ch))}</b> dibanding ${state.cmp.label} (${rangeLabel(state.cmp.start, state.cmp.end)}: ${rupiahShort(p.revenue)} → ${rupiahShort(s.revenue)}).${ch < 0 ? ' Cek apakah traffic (jumlah checkout) yang turun atau conversion-nya.' : ''}`);
     if (p.total > 0) {
       const trafficCh = (s.total - p.total) / p.total;
       const convCh = s.conversion - p.conversion;
@@ -796,7 +783,7 @@ function restoreFilters() {
     const f = JSON.parse(localStorage.getItem('dashsan.filters') || 'null');
     if (!f) return;
     if ([...$('platform').options].some((o) => o.value === f.platform)) $('platform').value = f.platform;
-    if (['yoy', 'prev'].includes(f.compare)) $('compare').value = f.compare;
+    if (['yoy', 'prev', 'mom'].includes(f.compare)) $('compare').value = f.compare;
     if (['purchase', 'conversion'].includes(f.platformMetricMode)) $('platformMetricMode').value = f.platformMetricMode;
     $('preset').value = f.preset || '30';
     $('startDate').value = f.start || '';
@@ -825,7 +812,7 @@ async function init() {
   // label opsi "Periode sebelumnya" ikut panjang periode, mis. "7 hari sebelumnya"
   const syncCompareLabel = () => {
     const [a, b] = presetRange($('preset').value, state.config.today);
-    if (a && b && b >= a) $('compare').options[1].text = `${daysBetween(a, b)} hari sebelumnya`;
+    if (a && b && b >= a) [...$('compare').options].find((option) => option.value === 'prev').text = `${daysBetween(a, b)} hari sebelumnya`;
   };
   syncCompareLabel();
   $('preset').addEventListener('change', () => { syncCustom(); syncCompareLabel(); if ($('preset').value !== 'custom') load(); });

@@ -42,6 +42,7 @@
         <select id="compare">
           <option value="yoy" selected>Periode sama tahun lalu</option>
           <option value="prev">Periode sebelumnya</option>
+          <option value="mom">Periode sama bulan lalu</option>
         </select>
       </label>
       <button type="submit" class="btn primary">Tampilkan</button>
@@ -75,7 +76,7 @@
         </div>
         <p id="downloaderRange" class="muted"></p>
         <p class="muted">Jumlah downloader dari Markaz mengikuti filter platform dan tanggal. Semua platform = penjumlahan tiap platform; bukan jumlah pembeli atau pengguna unik lintas aplikasi.</p>
-        <p class="muted">Konversi = pembeli unik ÷ downloader × 100%, pada tanggal yang sama dengan kartu downloader. Konversi sekarang dibandingkan dengan tahun lalu atau periode sebelumnya sesuai filter. Ini rasio volume; pembeli dapat berasal dari downloader periode lain.</p>
+        <p class="muted">Konversi = pembeli unik ÷ downloader × 100%, pada tanggal yang sama dengan kartu downloader. Konversi sekarang dibandingkan dengan tahun lalu, bulan lalu, atau periode sebelumnya sesuai filter. Ini rasio volume; pembeli dapat berasal dari downloader periode lain.</p>
         <p id="downloaderStatus" class="muted" role="status" aria-live="polite">Pilih periode untuk melihat downloader.</p>
         <div id="downloaderChartWrap" class="chart" hidden><canvas id="downloaderChart" aria-label="Tren downloader harian" role="img"></canvas></div>
         <div class="table-wrap downloader-table"><table id="downloaderTable" aria-label="Data downloader per hari dan pembanding"></table></div>

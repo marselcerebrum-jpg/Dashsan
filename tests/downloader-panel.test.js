@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createDownloaderPanel } from '../web/downloaders.js';
+import { compareRange } from '../web/comparison.js';
 
 function setup(fetchImpl, onUpdate) {
   const elements = new Map();
@@ -159,4 +160,24 @@ test('daily mode preserves the selected year comparison label and dates for conv
   assert.equal(latest.view.compare.short, 'tahun lalu');
   assert.equal(latest.view.compare.start, '2025-10-29');
   assert.equal(latest.previous.data[0].date, '2025-10-29');
+});
+
+test('monthly comparison fetches four matching days and daily mode uses their final date', async () => {
+  const calls = [];
+  const ui = setup(async (url) => {
+    calls.push(url);
+    const start = url.searchParams.get('start_date');
+    const end = url.searchParams.get('end_date');
+    const length = (Date.parse(end) - Date.parse(start)) / 86400000 + 1;
+    return Response.json(payload(start, Array(length).fill(10)));
+  });
+  const source = { ...view, range: { start: '2026-11-01', end: '2026-11-04', days: 4 }, compare: compareRange('mom', '2026-11-01', '2026-11-04') };
+  await ui.panel.load(source);
+  assert.deepEqual(calls.map((url) => [url.searchParams.get('start_date'), url.searchParams.get('end_date')]), [['2026-11-01', '2026-11-04'], ['2026-10-01', '2026-10-04']]);
+  assert.match(ui.elements.get('downloaderKpi').innerHTML, /vs bulan lalu \(40\)/);
+  calls.length = 0;
+  ui.elements.get('downloaderMode').value = 'daily';
+  await ui.panel.load(source);
+  assert.deepEqual(calls.map((url) => [url.searchParams.get('start_date'), url.searchParams.get('end_date')]), [['2026-11-04', '2026-11-04'], ['2026-10-04', '2026-10-04']]);
+  assert.match(ui.elements.get('downloaderKpi').innerHTML, /vs bulan lalu \(10\)/);
 });

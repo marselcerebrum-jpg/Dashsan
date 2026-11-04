@@ -36,6 +36,7 @@ Pertahankan arsitektur sederhana ini. Migrasi framework, database baru, bundler,
 | `tg-account.js` | Enkripsi kredensial/sesi, login QR, komunitas, dan pengiriman melalui akun khusus |
 | `web/index.html` | Struktur Dashboard dan Agent Tele |
 | `web/app.js` | Filter, analisis dashboard, Chart.js, follow-up, template WhatsApp, dan CSV |
+| `web/comparison.js` | Rentang dan label pembanding tahun lalu, periode sebelumnya, dan bulan lalu |
 | `web/downloaders.js` | Panel downloader dashboard, pembanding, grafik, penanda data parsial, dan CSV |
 | `web/downloader-data.js` | Pengambilan downloader dalam potongan pendek dan agregasi per platform lintas tanggal |
 | `web/platform-performance.js` | Mode performa platform, pembagi konversi, pemuatan seluruh periode, dan pembatalan request lama |
@@ -110,7 +111,7 @@ Pertahankan arsitektur sederhana ini. Migrasi framework, database baru, bundler,
 ## Dashboard dan follow-up WhatsApp
 
 - Default platform adalah **Semua platform**; default pembanding adalah **periode sama tahun lalu**.
-- Opsi lain adalah N hari tepat sebelum periode terpilih. Pertahankan durasi inklusif dan penanganan 29 Februari saat menggeser tahun.
+- Opsi lain adalah N hari tepat sebelum periode terpilih dan **Periode sama bulan lalu** (`mom`). Pembanding bulanan menggeser tanggal akhir satu bulan kalender ke belakang, membatasi tanggal yang tidak ada ke hari terakhir bulan, lalu menghitung mundur dengan durasi inklusif yang sama. Jika filter ada dalam satu bulan, pembanding tetap dalam bulan sebelumnya; durasi dibatasi hari yang tersedia bila bulan sebelumnya lebih pendek. Contoh 1–4 November → 1–4 Oktober, 28–31 Maret → 25–28 Februari (nonkabisat), seluruh Maret → seluruh Februari. Rentang lintas bulan mempertahankan durasinya. Pertahankan penanganan 29 Februari saat menggeser tahun.
 - KPI, insight, tabel platform, dan grafik pembanding harus memakai rentang yang sama dan label yang jelas.
 - Jangan menyimpulkan pembanding yang gagal dimuat sebagai pertumbuhan nyata dari omzet nol.
 - Follow-up ditujukan untuk orang yang checkout tetapi belum berhasil membeli pada platform terkait.

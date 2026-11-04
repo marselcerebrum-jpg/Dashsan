@@ -37,6 +37,10 @@ API key dikirim di header `Authorization: <key>` (tanpa `Bearer`). Jika dashboar
 
 ## Catatan teknis
 
+### Pilihan pembanding
+
+Filter **Bandingkan dengan** menyediakan **Periode sama tahun lalu**, **N hari sebelumnya**, dan **Periode sama bulan lalu**. Contoh: 1–4 November dibandingkan dengan 1–4 Oktober. Pilihan mengikuti KPI, insight, tren, omzet per platform, downloader, dan konversi, serta tersimpan di browser. Mode bulan lalu menggeser tanggal akhir satu bulan kalender dan mempertahankan jumlah hari filter. Jika tanggal akhir tidak ada di bulan lalu, gunakan hari terakhir bulan tersebut; misalnya 28–31 Maret dibandingkan dengan 25–28 Februari. Filter satu bulan tidak diperpanjang ke bulan lainnya bila bulan pembanding lebih pendek; seluruh Maret dibandingkan dengan seluruh Februari. Tanggal/rentang pembanding ditampilkan pada dashboard.
+
 ### Downloader harian
 
 Tabel **Performa per Platform** (pilihan Semua platform) memiliki filter **Berdasarkan**: **Pembeli (Checkout → Sukses)** memakai transaksi sukses ÷ checkout; **Konversi (Download → Sukses)** memakai transaksi sukses ÷ downloader tiap platform. Kolom Checkout berubah menjadi Download. Keduanya memakai seluruh rentang tanggal sales yang diterapkan; pilihan Harian pada kartu downloader tidak mengubah cakupan tabel ini. Jumlah Sukses tetap berupa transaksi, berbeda dari pembeli unik pada KPI Konversi. Omzet, pertumbuhan, dan kontribusi tetap tersedia. Data downloader dimuat saat mode Konversi dipilih, dapat dimuat ulang, dan pilihan mode disimpan di browser. Platform dengan downloader tidak lengkap atau nol tidak diberi persentase semu; kegagalan suatu platform tidak menghilangkan konversi platform lain yang datanya lengkap.
